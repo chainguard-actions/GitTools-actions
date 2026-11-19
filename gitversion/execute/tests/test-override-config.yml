@@ -1,0 +1,30 @@
+name: Test overrideConfig next-version
+on:
+  workflow_dispatch:
+env:
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+  GITVERSION_VERSION: "6.3.0"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion native binary and dotnet shim
+        run: bash "$GITHUB_WORKSPACE/tests/fixtures/install-gitversion.sh"
+      - id: action
+        uses: .
+        with:
+          disableShallowCloneCheck: "true"
+          overrideConfig: |
+            next-version=99.0.0
+      - name: Assert major is 99
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+        run: |
+          echo "major=$MAJOR majorMinorPatch=$MMP"
+          if [ "$MAJOR" != "99" ]; then echo "FAIL: expected major 99"; exit 1; fi
+          case "$MMP" in 99.*) ;; *) echo "FAIL: majorMinorPatch should start with 99."; exit 1;; esac
+          echo "PASS"

@@ -1,0 +1,40 @@
+name: Test basic usage
+on:
+  workflow_dispatch:
+env:
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+  GITVERSION_VERSION: "6.3.0"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion native binary and dotnet shim
+        run: bash "$GITHUB_WORKSPACE/tests/fixtures/install-gitversion.sh"
+      - id: action
+        uses: .
+        with:
+          disableShallowCloneCheck: "true"
+      - name: Assert outputs
+        env:
+          SEMVER: ${{ steps.action.outputs.semVer }}
+          MAJOR: ${{ steps.action.outputs.major }}
+          MINOR: ${{ steps.action.outputs.minor }}
+          PATCH: ${{ steps.action.outputs.patch }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+          SHA: ${{ steps.action.outputs.sha }}
+          SHORTSHA: ${{ steps.action.outputs.shortSha }}
+          FULLSEMVER: ${{ steps.action.outputs.fullSemVer }}
+        run: |
+          echo "semVer=$SEMVER fullSemVer=$FULLSEMVER major=$MAJOR minor=$MINOR patch=$PATCH mmp=$MMP sha=$SHA shortSha=$SHORTSHA"
+          [ -n "$SEMVER" ] || { echo "FAIL: semVer empty"; exit 1; }
+          echo "$MAJOR$MINOR$PATCH" | grep -qE '^[0-9]+$' || { echo "FAIL: non-numeric version parts"; exit 1; }
+          if [ "$MMP" != "$MAJOR.$MINOR.$PATCH" ]; then echo "FAIL: majorMinorPatch mismatch"; exit 1; fi
+          case "$SEMVER" in "$MMP"*) ;; *) echo "FAIL: semVer does not start with majorMinorPatch"; exit 1;; esac
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$SHA" != "$HEAD_SHA" ]; then echo "FAIL: sha '$SHA' != HEAD '$HEAD_SHA'"; exit 1; fi
+          [ -n "$SHORTSHA" ] || { echo "FAIL: shortSha empty"; exit 1; }
+          case "$HEAD_SHA" in "$SHORTSHA"*) ;; *) echo "FAIL: shortSha not prefix of sha"; exit 1;; esac
+          echo "PASS"

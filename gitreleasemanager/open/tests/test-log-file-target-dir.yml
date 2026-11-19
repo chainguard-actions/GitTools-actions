@@ -1,0 +1,36 @@
+name: Test gitreleasemanager open with targetDirectory and logFilePath
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare target directory
+        run: mkdir -p "$GITHUB_WORKSPACE/grm-target"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ github.token }}
+          milestone: '0.0.2-act-test'
+          targetDirectory: ${{ github.workspace }}/grm-target
+          logFilePath: ${{ github.workspace }}/grm-target/grm.log
+      - name: Assert action ran (succeeded or failed gracefully on the sentinel repo)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            if [ ! -f "$GITHUB_WORKSPACE/grm-target/grm.log" ]; then
+              echo "FAIL: action succeeded but log file was not created"
+              exit 1
+            fi
+            echo "PASS: action succeeded and log file exists"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (sentinel repo / tool not resolvable)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

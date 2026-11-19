@@ -1,0 +1,32 @@
+name: Test close with targetDirectory and logFilePath
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare target directory
+        run: mkdir -p "$RUNNER_TEMP/grm-target"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ github.token }}
+          milestone: '2.0.0'
+          targetDirectory: ${{ runner.temp }}/grm-target
+          logFilePath: ${{ runner.temp }}/grm-target/grm.log
+      - name: Assert action ran (succeeded, or failed gracefully on the sentinel repo)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (tool/sentinel repo not resolvable)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

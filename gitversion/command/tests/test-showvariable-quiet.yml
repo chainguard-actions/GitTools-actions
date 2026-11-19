@@ -1,0 +1,71 @@
+name: Test showvariable with quiet verbosity
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion binary and dotnet shim (stands in for gitversion/setup)
+        run: |
+          set -e
+          VER=6.3.0
+          DIR="$RUNNER_TEMP/gitversion-tool"
+          SHIM="$RUNNER_TEMP/dotnet-shim"
+          mkdir -p "$DIR" "$SHIM"
+          curl -fsSL "https://github.com/GitTools/GitVersion/releases/download/${VER}/gitversion-linux-x64-${VER}.tar.gz" -o "$RUNNER_TEMP/gv.tar.gz"
+          tar -xzf "$RUNNER_TEMP/gv.tar.gz" -C "$DIR"
+          chmod +x "$DIR/gitversion"
+          cp "$DIR/gitversion" "$DIR/dotnet-gitversion"
+          # The action requires a 'dotnet' executable; provide a shim that
+          # forwards tool invocations to the native gitversion binary.
+          cat > "$SHIM/dotnet" <<EOF
+          #!/bin/bash
+          echo "dotnet \$*" >> "$RUNNER_TEMP/dotnet-calls.log"
+          case "\$1" in
+            --info|--version) echo "8.0.100"; exit 0 ;;
+            --list-sdks) echo "8.0.100 [$SHIM/sdk]"; exit 0 ;;
+            --list-runtimes) echo "Microsoft.NETCore.App 8.0.0 [$SHIM/shared/Microsoft.NETCore.App]"; exit 0 ;;
+            tool|nuget|new|restore|build) echo "fake dotnet \$*"; exit 0 ;;
+          esac
+          args=()
+          skip=0
+          for a in "\$@"; do
+            if [ \$skip = 1 ]; then skip=0; continue; fi
+            case "\$a" in
+              --roll-forward) skip=1 ;;
+              --roll-forward=*|"--roll-forward Major") ;;
+              *gitversion|*gitversion.dll|*gitversion.exe|*.dll) ;;
+              *) args+=("\$a") ;;
+            esac
+          done
+          exec "$DIR/gitversion" "\${args[@]}"
+          EOF
+          chmod +x "$SHIM/dotnet"
+          echo "$SHIM" >> "$GITHUB_PATH"
+          echo "$DIR" >> "$GITHUB_PATH"
+          echo "DOTNET_ROOT=$SHIM" >> "$GITHUB_ENV"
+          echo "GITVERSION_PATH=$DIR" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          disableShallowCloneCheck: "true"
+          verbosity: quiet
+          arguments: /showvariable FullSemVer
+      - name: Show dotnet shim calls
+        if: always()
+        run: cat "$RUNNER_TEMP/dotnet-calls.log" 2>/dev/null || echo "(no dotnet calls)"
+      - name: Assert action succeeded
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" != "success" ]; then
+            echo "FAIL: expected success"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,40 @@
+name: Test setup with preferLatestVersion
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install .NET SDK 8
+        run: |
+          curl -sSfL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          versionSpec: '6.x'
+          preferLatestVersion: 'true'
+          includePrerelease: 'false'
+      - name: Assert a stable 6.x GitVersion is installed
+        run: |
+          if ! command -v dotnet-gitversion >/dev/null 2>&1; then
+            echo "FAIL: dotnet-gitversion not found on PATH"
+            exit 1
+          fi
+          VERSION="$(dotnet-gitversion /version | head -n1)"
+          echo "actual: $VERSION"
+          CORE="${VERSION%%+*}"
+          case "$CORE" in
+            *-*) echo "FAIL: got prerelease version but includePrerelease=false"; exit 1 ;;
+          esac
+          case "$CORE" in
+            6.*) echo "PASS" ;;
+            *) echo "FAIL: expected version 6.x"; exit 1 ;;
+          esac

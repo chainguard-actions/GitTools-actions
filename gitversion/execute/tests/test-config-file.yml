@@ -1,0 +1,27 @@
+name: Test configFilePath
+on:
+  workflow_dispatch:
+env:
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+  GITVERSION_VERSION: "6.3.0"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion native binary and dotnet shim
+        run: bash "$GITHUB_WORKSPACE/tests/fixtures/install-gitversion.sh"
+      - id: action
+        uses: .
+        with:
+          disableShallowCloneCheck: "true"
+          configFilePath: tests/fixtures/GitVersion.yml
+      - name: Assert major is 77
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+        run: |
+          echo "major=$MAJOR"
+          if [ "$MAJOR" != "77" ]; then echo "FAIL: expected major 77"; exit 1; fi
+          echo "PASS"

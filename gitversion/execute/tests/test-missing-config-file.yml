@@ -1,0 +1,43 @@
+name: Test missing configFilePath fails
+on:
+  workflow_dispatch:
+env:
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+  GITVERSION_VERSION: "6.3.0"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion native binary
+        run: |
+          set -e
+          git fetch --unshallow 2>/dev/null || true
+          DIR="$RUNNER_TEMP/gitversion"
+          mkdir -p "$DIR"
+          curl -fsSL -o "$RUNNER_TEMP/gv.tar.gz" \
+            "https://github.com/GitTools/GitVersion/releases/download/${GITVERSION_VERSION}/gitversion-linux-x64-${GITVERSION_VERSION}.tar.gz"
+          tar -xzf "$RUNNER_TEMP/gv.tar.gz" -C "$DIR"
+          BIN="$(find "$DIR" -type f -iname 'gitversion' | head -n1)"
+          [ -n "$BIN" ] || { echo "gitversion binary not found"; ls -laR "$DIR"; exit 1; }
+          chmod +x "$BIN"
+          [ "$BIN" = "$DIR/gitversion" ] || cp "$BIN" "$DIR/gitversion"
+          cp "$DIR/gitversion" "$DIR/dotnet-gitversion"
+          echo "$DIR" >> "$GITHUB_PATH"
+          echo "GITVERSION_PATH=$DIR" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          disableShallowCloneCheck: "true"
+          configFilePath: tests/fixtures/does-not-exist.yml
+      - name: Assert action failed
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          SEMVER: ${{ steps.action.outputs.semVer }}
+        run: |
+          echo "outcome=$OUTCOME semVer=$SEMVER"
+          if [ "$OUTCOME" != "failure" ]; then echo "FAIL: expected failure for missing config file"; exit 1; fi
+          echo "PASS"

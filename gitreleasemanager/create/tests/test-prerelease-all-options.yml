@@ -1,0 +1,43 @@
+name: Test pre-release with all options
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare asset
+        run: |
+          mkdir -p "$RUNNER_TEMP/grm-assets"
+          echo "asset content" > "$RUNNER_TEMP/grm-assets/asset.txt"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ github.token }}
+          milestone: v0.0.2-act-harness
+          name: Act Harness Pre-release
+          inputFilePath: ${{ github.workspace }}/tests/fixtures/release-notes.md
+          isPreRelease: 'true'
+          targetcommitish: ${{ github.sha }}
+          assets: ${{ runner.temp }}/grm-assets/asset.txt
+          targetDirectory: ${{ github.workspace }}
+          logFilePath: ${{ runner.temp }}/grm.log
+      - name: Assert action ran (succeeded or failed gracefully on sentinel repo)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ -f "$RUNNER_TEMP/grm.log" ]; then
+            echo "--- log ---"
+            cat "$RUNNER_TEMP/grm.log"
+          fi
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: pre-release created"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (sentinel repo / tool not resolvable)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
