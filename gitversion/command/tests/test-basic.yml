@@ -1,0 +1,75 @@
+name: Test basic showvariable
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion binary and dotnet shims
+        run: |
+          set -e
+          REAL="$RUNNER_TEMP/gitversion-real"
+          DIR="$RUNNER_TEMP/gitversion-tool"
+          mkdir -p "$REAL" "$DIR"
+          curl -fsSL "https://github.com/GitTools/GitVersion/releases/download/6.3.0/gitversion-linux-x64-6.3.0.tar.gz" -o "$RUNNER_TEMP/gv.tar.gz"
+          tar -xzf "$RUNNER_TEMP/gv.tar.gz" -C "$REAL"
+          chmod +x "$REAL/gitversion"
+          "$REAL/gitversion" /version
+          # Shim used for 'dotnet', 'dotnet-gitversion' and 'dotnet-gitversion.dll':
+          # strips dotnet-specific args and runs the native GitVersion binary.
+          cat > "$DIR/shim" <<'EOF'
+          #!/bin/bash
+          REAL_BIN="$(cd "$(dirname "$0")/.." && pwd)/gitversion-real/gitversion"
+          args=()
+          skip=0
+          first=1
+          for a in "$@"; do
+            if [ "$skip" = 1 ]; then skip=0; continue; fi
+            case "$a" in
+              --roll-forward) skip=1; continue ;;
+              "--roll-forward Major"|--roll-forward=*) continue ;;
+            esac
+            if [ "$first" = 1 ]; then
+              first=0
+              case "$a" in
+                *dotnet-gitversion*|*gitversion.dll) continue ;;
+              esac
+            fi
+            args+=("$a")
+          done
+          case "${args[0]}" in
+            --info|--version) echo "8.0.100"; exit 0 ;;
+            --list-sdks) echo "8.0.100 [$(dirname "$0")/sdk]"; exit 0 ;;
+            --list-runtimes) echo "Microsoft.NETCore.App 8.0.0 [$(dirname "$0")/shared/Microsoft.NETCore.App]"; exit 0 ;;
+          esac
+          exec "$REAL_BIN" "${args[@]}"
+          EOF
+          sed -i 's/^          //' "$DIR/shim"
+          for n in dotnet dotnet-gitversion dotnet-gitversion.dll gitversion; do
+            cp "$DIR/shim" "$DIR/$n"
+            chmod +x "$DIR/$n"
+          done
+          "$DIR/dotnet-gitversion" /version
+          echo "$DIR" >> "$GITHUB_PATH"
+          echo "GITVERSION_PATH=$DIR" >> "$GITHUB_ENV"
+          echo "DOTNET_ROOT=$DIR" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          arguments: /output file /outputfile gv-basic.json
+      - name: Assert output file has semver
+        run: |
+          test -f gv-basic.json || { echo "FAIL: gv-basic.json not written"; exit 1; }
+          cat gv-basic.json
+          V="$(jq -r .SemVer gv-basic.json)"
+          echo "SemVer: $V"
+          if ! echo "$V" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "FAIL: invalid SemVer"
+            exit 1
+          fi
+          echo "PASS"

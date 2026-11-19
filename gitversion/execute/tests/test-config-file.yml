@@ -1,0 +1,37 @@
+name: Test configFilePath
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install GitVersion CLI
+        run: bash "$GITHUB_WORKSPACE/tests/fixtures/install-gitversion.sh"
+      - name: Create a fresh untagged repo with a custom config file
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/gv-repo"
+          mkdir -p "$GITHUB_WORKSPACE/gv-repo"
+          cd "$GITHUB_WORKSPACE/gv-repo"
+          git init -b main
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          printf 'next-version: 5.0.0\n' > custom-gitversion.yml
+          echo one > file.txt && git add file.txt custom-gitversion.yml && git commit -m "first"
+      - id: action
+        uses: .
+        env:
+          GITHUB_REF: refs/heads/main
+        with:
+          targetPath: gv-repo
+          disableNormalization: 'true'
+          configFilePath: ${{ github.workspace }}/gv-repo/custom-gitversion.yml
+      - name: Assert config file applied
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+        run: |
+          echo "major=$MAJOR mmp=$MMP"
+          [ "$MAJOR" = "5" ] || { echo "FAIL: major expected 5"; exit 1; }
+          case "$MMP" in 5.0.*) ;; *) echo "FAIL: majorMinorPatch expected 5.0.x"; exit 1 ;; esac
+          echo "PASS"

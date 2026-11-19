@@ -1,0 +1,113 @@
+name: Test targetPath and verbosity
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion binary and dotnet shims
+        run: |
+          set -e
+          REAL="$RUNNER_TEMP/gitversion-real"
+          DIR="$RUNNER_TEMP/gitversion-tool"
+          mkdir -p "$REAL" "$DIR"
+          curl -fsSL "https://github.com/GitTools/GitVersion/releases/download/6.3.0/gitversion-linux-x64-6.3.0.tar.gz" -o "$RUNNER_TEMP/gv.tar.gz"
+          tar -xzf "$RUNNER_TEMP/gv.tar.gz" -C "$REAL"
+          chmod +x "$REAL/gitversion"
+          # Shim used for 'dotnet', 'dotnet-gitversion' and 'dotnet-gitversion.dll':
+          # strips dotnet-specific args and runs the native GitVersion binary.
+          cat > "$DIR/shim" <<'EOF'
+          #!/bin/bash
+          REAL_BIN="$(cd "$(dirname "$0")/.." && pwd)/gitversion-real/gitversion"
+          args=()
+          skip=0
+          first=1
+          for a in "$@"; do
+            if [ "$skip" = 1 ]; then skip=0; continue; fi
+            case "$a" in
+              --roll-forward) skip=1; continue ;;
+              "--roll-forward Major"|--roll-forward=*) continue ;;
+            esac
+            if [ "$first" = 1 ]; then
+              first=0
+              case "$a" in
+                *dotnet-gitversion*|*gitversion.dll) continue ;;
+              esac
+            fi
+            args+=("$a")
+          done
+          case "${args[0]}" in
+            --info|--version) echo "8.0.100"; exit 0 ;;
+            --list-sdks) echo "8.0.100 [$(dirname "$0")/sdk]"; exit 0 ;;
+            --list-runtimes) echo "Microsoft.NETCore.App 8.0.0 [$(dirname "$0")/shared/Microsoft.NETCore.App]"; exit 0 ;;
+          esac
+          exec "$REAL_BIN" "${args[@]}"
+          EOF
+          sed -i 's/^          //' "$DIR/shim"
+          for n in dotnet dotnet-gitversion dotnet-gitversion.dll gitversion; do
+            cp "$DIR/shim" "$DIR/$n"
+            chmod +x "$DIR/$n"
+          done
+          "$DIR/dotnet-gitversion" /version
+          echo "$DIR" >> "$GITHUB_PATH"
+          echo "GITVERSION_PATH=$DIR" >> "$GITHUB_ENV"
+          echo "DOTNET_ROOT=$DIR" >> "$GITHUB_ENV"
+      - name: Create a separate git repo with a tag and GitVersion config
+        run: |
+          set -e
+          R="$RUNNER_TEMP/target-repo"
+          rm -rf "$R"
+          mkdir -p "$R"
+          cd "$R"
+          # Branch name matches what GitVersion reads from the build env (act-harness)
+          git init -q -b act-harness
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          # Treat act-harness as the main branch so GitVersion does not skip it
+          # as an orphaned "unknown" branch (no source branch to derive from).
+          cat > GitVersion.yml <<'EOF'
+          workflow: GitFlow/v1
+          branches:
+            main:
+              regex: ^act-harness$
+          EOF
+          sed -i 's/^          //' GitVersion.yml
+          cat GitVersion.yml
+          echo hi > file.txt
+          git add file.txt GitVersion.yml
+          git commit -q -m "initial"
+          git tag 2.5.0
+          # GitVersion on a build server requires exactly one remote
+          B="$RUNNER_TEMP/target-remote.git"
+          rm -rf "$B"
+          git init -q --bare "$B"
+          git remote add origin "$B"
+          git push -q origin act-harness
+          git push -q origin --tags
+          git fetch -q origin
+          git branch -u origin/act-harness
+          git remote -v
+          echo "TARGET_REPO=$R" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          targetPath: ${{ env.TARGET_REPO }}
+          verbosity: verbose
+          arguments: /nofetch /output file /outputfile ${{ runner.temp }}/gv.json
+      - name: Assert version comes from tagged target repo
+        run: |
+          F="$RUNNER_TEMP/gv.json"
+          test -f "$F" || { echo "FAIL: $F not written"; exit 1; }
+          cat "$F"
+          V="$(jq -r .MajorMinorPatch "$F")"
+          echo "MajorMinorPatch: $V"
+          if [ "$V" != "2.5.0" ]; then
+            echo "FAIL: expected 2.5.0"
+            exit 1
+          fi
+          echo "PASS"

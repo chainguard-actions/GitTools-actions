@@ -1,0 +1,38 @@
+name: Test basic exact version install
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure .NET SDK is available
+        run: |
+          if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks | grep -qE '^(8|9|10)\.'; then
+            echo "dotnet already present"; dotnet --list-sdks; exit 0
+          fi
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          versionSpec: '6.3.0'
+      - name: Assert GitVersion installed with exact version
+        run: |
+          BIN="$(command -v dotnet-gitversion || command -v gitversion || true)"
+          echo "binary: $BIN"
+          echo "GITVERSION_PATH: ${GITVERSION_PATH:-<unset>}"
+          if [ -z "$BIN" ]; then
+            echo "FAIL: gitversion binary not found on PATH"
+            echo "PATH=$PATH"
+            exit 1
+          fi
+          VER="$("$BIN" /version)"
+          echo "version: $VER"
+          case "$VER" in
+            6.3.0*) echo "PASS" ;;
+            *) echo "FAIL: expected version 6.3.0"; exit 1 ;;
+          esac

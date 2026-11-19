@@ -1,0 +1,46 @@
+name: Test commits after a tag
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install GitVersion CLI
+        run: bash "$GITHUB_WORKSPACE/tests/fixtures/install-gitversion.sh"
+      - name: Create a fresh repo with two commits after tag v1.0.0
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/gv-repo"
+          mkdir -p "$GITHUB_WORKSPACE/gv-repo"
+          cd "$GITHUB_WORKSPACE/gv-repo"
+          git init -b main
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          echo one > file.txt && git add file.txt && git commit -m "first"
+          git tag v1.0.0
+          git rev-parse HEAD > ../gv-tag-sha.txt
+          echo two > file.txt && git commit -am "second"
+          echo three > file.txt && git commit -am "third"
+      - id: action
+        uses: .
+        env:
+          GITHUB_REF: refs/heads/main
+        with:
+          targetPath: gv-repo
+          disableNormalization: 'true'
+      - name: Assert version advanced past the tag
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MINOR: ${{ steps.action.outputs.minor }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+          SEMVER: ${{ steps.action.outputs.semVer }}
+          COMMITS: ${{ steps.action.outputs.commitsSinceVersionSource }}
+          VSSHA: ${{ steps.action.outputs.versionSourceSha }}
+        run: |
+          echo "major=$MAJOR minor=$MINOR mmp=$MMP semVer=$SEMVER commits=$COMMITS versionSourceSha=$VSSHA"
+          [ "$MAJOR" = "1" ] || { echo "FAIL: major"; exit 1; }
+          [ -n "$MMP" ] && [ "$MMP" != "1.0.0" ] || { echo "FAIL: majorMinorPatch should advance past 1.0.0"; exit 1; }
+          [ -n "$SEMVER" ] || { echo "FAIL: semVer empty"; exit 1; }
+          [ "$COMMITS" = "2" ] || { echo "FAIL: commitsSinceVersionSource expected 2"; exit 1; }
+          [ "$VSSHA" = "$(cat "$GITHUB_WORKSPACE/gv-tag-sha.txt")" ] || { echo "FAIL: versionSourceSha should be tagged commit"; exit 1; }
+          echo "PASS"

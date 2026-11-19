@@ -1,0 +1,37 @@
+name: Test wildcard versionSpec
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_ROLL_FORWARD: Major
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure .NET SDK is available
+        run: |
+          if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks | grep -q .; then
+            exit 0
+          fi
+          curl -sSfL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          versionSpec: '0.20.x'
+          preferLatestVersion: 'true'
+          ignoreFailedSources: 'true'
+      - name: Assert GitReleaseManager is on PATH
+        run: |
+          if ! command -v dotnet-gitreleasemanager >/dev/null 2>&1; then
+            echo "FAIL: dotnet-gitreleasemanager not found on PATH"
+            exit 1
+          fi
+          echo "found: $(command -v dotnet-gitreleasemanager)"
+          dotnet-gitreleasemanager --version || true
+          echo "PASS"

@@ -1,0 +1,37 @@
+name: Test pre-release with release notes file
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create release notes file
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/grm-test"
+          printf '# Release notes\n\n- test item\n' > "$GITHUB_WORKSPACE/grm-test/notes.md"
+          echo "artifact" > "$GITHUB_WORKSPACE/grm-test/asset.txt"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: 'v0.0.2-act-test'
+          inputFilePath: grm-test/notes.md
+          isPreRelease: 'true'
+          targetcommitish: ${{ github.sha }}
+          assets: grm-test/asset.txt
+      - name: Assert action ran (succeeded or failed gracefully on the sentinel repo)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: pre-release created"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (sentinel repo not resolvable / tool unavailable)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

@@ -1,0 +1,68 @@
+name: Test close against a nonexistent repository/milestone
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install .NET SDK and GitReleaseManager tool
+        run: |
+          set -e
+          export DOTNET_ROOT="$HOME/.dotnet"
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 9.0 --install-dir "$DOTNET_ROOT"
+          export PATH="$DOTNET_ROOT:$PATH"
+          export DOTNET_ROLL_FORWARD=Major
+          TOOLDIR="$RUNNER_TEMP/grm"
+          dotnet tool install GitReleaseManager.Tool --tool-path "$TOOLDIR"
+          ls -la "$TOOLDIR"
+          echo "DOTNET_ROOT=$DOTNET_ROOT" >> "$GITHUB_ENV"
+          echo "DOTNET_ROLL_FORWARD=Major" >> "$GITHUB_ENV"
+          echo "GITRELEASEMANAGER_PATH=$TOOLDIR" >> "$GITHUB_ENV"
+          echo "$DOTNET_ROOT" >> "$GITHUB_PATH"
+          echo "$TOOLDIR" >> "$GITHUB_PATH"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: actionchain-harness/this-repo-does-not-exist-12345
+          token: ${{ github.token }}
+          milestone: v0.0.0-nonexistent
+          logFilePath: ${{ runner.temp }}/grm-close.log
+      - name: Assert action ran GitReleaseManager close for the given milestone
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          LOGFILE: ${{ runner.temp }}/grm-close.log
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ -f "$LOGFILE" ]; then
+            echo "--- log file ---"
+            cat "$LOGFILE"
+          fi
+          # GitReleaseManager only warns (exit 0) when the milestone cannot be
+          # found; an API error may instead make it fail. Both are acceptable,
+          # but the step must not be skipped/cancelled.
+          if [ "$OUTCOME" != "success" ] && [ "$OUTCOME" != "failure" ]; then
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+          if [ ! -s "$LOGFILE" ]; then
+            echo "FAIL: expected GitReleaseManager to write log file at $LOGFILE"
+            exit 1
+          fi
+          if ! grep -q "Closing milestone v0.0.0-nonexistent" "$LOGFILE"; then
+            echo "FAIL: log does not show the close command ran for the milestone"
+            exit 1
+          fi
+          if ! grep -q "this-repo-does-not-exist-12345" "$LOGFILE"; then
+            echo "FAIL: log does not reference the requested repository"
+            exit 1
+          fi
+          if [ "$OUTCOME" = "success" ]; then
+            if ! grep -qi "Unable to find a open milestone" "$LOGFILE"; then
+              echo "FAIL: action succeeded but log has no 'milestone not found' warning"
+              exit 1
+            fi
+          fi
+          echo "PASS"
