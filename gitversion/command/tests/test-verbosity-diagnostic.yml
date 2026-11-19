@@ -1,0 +1,85 @@
+name: Test command with diagnostic verbosity
+on:
+  workflow_dispatch:
+env:
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_NOLOGO: "true"
+  DOTNET_ROLL_FORWARD: Major
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install .NET SDKs and GitVersion.Tool 7.0.0 (POSIX-style args, supports --verbosity)
+        run: |
+          set -e
+          DOTNET_DIR="$RUNNER_TEMP/dotnet"
+          curl -sSfL https://dot.net/v1/dotnet-install.sh -o "$RUNNER_TEMP/dotnet-install.sh"
+          bash "$RUNNER_TEMP/dotnet-install.sh" --channel 8.0 --install-dir "$DOTNET_DIR"
+          bash "$RUNNER_TEMP/dotnet-install.sh" --channel 10.0 --install-dir "$DOTNET_DIR"
+          export DOTNET_ROOT="$DOTNET_DIR"
+          export PATH="$DOTNET_DIR:$PATH"
+          GV_DIR="$RUNNER_TEMP/gitversion-tool"
+          dotnet tool install GitVersion.Tool --version 7.0.0 --tool-path "$GV_DIR"
+          "$GV_DIR/dotnet-gitversion" --version || true
+          echo "DOTNET_ROOT=$DOTNET_DIR" >> "$GITHUB_ENV"
+          echo "GITVERSION_PATH=$GV_DIR" >> "$GITHUB_ENV"
+          echo "$DOTNET_DIR" >> "$GITHUB_PATH"
+          echo "$GV_DIR" >> "$GITHUB_PATH"
+      - name: Create a fresh repo on a feature branch with a single origin remote
+        run: |
+          set -e
+          REPO="$GITHUB_WORKSPACE/gv-repo-diag"
+          REMOTE="$RUNNER_TEMP/gv-repo-diag-remote.git"
+          rm -rf "$REPO" "$REMOTE"
+          mkdir -p "$REPO"
+          cd "$REPO"
+          git init -b main .
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          echo one > file.txt && git add file.txt && git commit -m "first"
+          git tag 1.0.0
+          git checkout -b feature/test-thing
+          echo two >> file.txt && git commit -am "feature work"
+          git branch act-harness HEAD
+          git init --bare "$REMOTE"
+          git remote add origin "$REMOTE"
+          git push origin --all
+          git push origin --tags
+          git fetch origin
+          git remote -v
+      - id: action
+        uses: .
+        with:
+          targetPath: ${{ github.workspace }}/gv-repo-diag
+          verbosity: diagnostic
+          arguments: --output file --output-file ${{ runner.temp }}/gv-diag.json
+      - name: Assert output file was produced with a version based on tag 1.0.0
+        run: |
+          F="$RUNNER_TEMP/gv-diag.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: output file $F not created"
+            exit 1
+          fi
+          cat "$F"
+          # The branch name may come from the build server's GITHUB_REF (act-harness)
+          # rather than the local branch, so only require it to be non-empty.
+          BRANCH=$(sed -n 's/.*"BranchName": *"\([^"]*\)".*/\1/p' "$F" | head -n1)
+          MAJOR=$(sed -n 's/.*"Major": *\([0-9]*\).*/\1/p' "$F" | head -n1)
+          SHA=$(sed -n 's/.*"Sha": *"\([^"]*\)".*/\1/p' "$F" | head -n1)
+          EXPECTED_SHA=$(git -C "$GITHUB_WORKSPACE/gv-repo-diag" rev-parse feature/test-thing)
+          echo "BranchName: $BRANCH  Major: $MAJOR  Sha: $SHA (expected $EXPECTED_SHA)"
+          if [ -z "$BRANCH" ]; then
+            echo "FAIL: BranchName is empty"
+            exit 1
+          fi
+          if [ "$MAJOR" != "1" ]; then
+            echo "FAIL: expected Major 1"
+            exit 1
+          fi
+          if [ "$SHA" != "$EXPECTED_SHA" ]; then
+            echo "FAIL: expected Sha of the feature commit"
+            exit 1
+          fi
+          echo "PASS"

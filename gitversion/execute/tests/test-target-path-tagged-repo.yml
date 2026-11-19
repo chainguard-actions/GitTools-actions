@@ -1,0 +1,90 @@
+name: Test targetPath on a freshly tagged repository
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install GitVersion tool (replaces gitversion/setup)
+        run: |
+          set -e
+          git config --global --add safe.directory '*'
+          DOTNET_DIR="$HOME/.dotnet"
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 10.0 --install-dir "$DOTNET_DIR"
+          export DOTNET_ROOT="$DOTNET_DIR"
+          export DOTNET_ROLL_FORWARD=Major
+          export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1
+          "$DOTNET_DIR/dotnet" tool install GitVersion.Tool --tool-path "$HOME/gitversion-tool"
+          {
+            echo "DOTNET_ROOT=$DOTNET_DIR"
+            echo "DOTNET_ROLL_FORWARD=Major"
+            echo "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1"
+            echo "DOTNET_CLI_TELEMETRY_OPTOUT=1"
+            echo "GITVERSION_PATH=$HOME/gitversion-tool"
+          } >> "$GITHUB_ENV"
+          echo "$DOTNET_DIR" >> "$GITHUB_PATH"
+          echo "$HOME/gitversion-tool" >> "$GITHUB_PATH"
+      - name: Create a tagged repository (main + act-harness branched from it)
+        run: |
+          set -e
+          REPO="$RUNNER_TEMP/target-repo"
+          REMOTE="$RUNNER_TEMP/target-remote.git"
+          rm -rf "$REPO" "$REMOTE"
+          git init -q --bare "$REMOTE"
+          mkdir -p "$REPO"
+          cd "$REPO"
+          # A 'main' branch gives GitVersion a source branch; act-harness (the branch
+          # GitVersion is told to use) is branched off it so it is not orphaned.
+          git init -q -b main
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          echo hello > README.md
+          git add README.md
+          git commit -q -m "initial"
+          git checkout -q -b act-harness
+          echo world >> README.md
+          git commit -q -am "second"
+          git tag 1.2.3
+          git remote add origin "$REMOTE"
+          git push -q origin main act-harness
+          git push -q origin --tags
+          git fetch -q origin
+          git branch -u origin/act-harness
+          git log --oneline --decorate --all
+      - id: action
+        uses: .
+        with:
+          targetPath: ${{ runner.temp }}/target-repo
+      - name: Assert version from tag
+        env:
+          SEMVER: ${{ steps.action.outputs.semVer }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+          MAJOR: ${{ steps.action.outputs.major }}
+          MINOR: ${{ steps.action.outputs.minor }}
+          PATCH: ${{ steps.action.outputs.patch }}
+          BRANCH: ${{ steps.action.outputs.branchName }}
+          SHA: ${{ steps.action.outputs.sha }}
+          ALIAS_MMP: ${{ steps.action.outputs.GitVersion_MajorMinorPatch }}
+        run: |
+          echo "semVer=$SEMVER mmp=$MMP major=$MAJOR minor=$MINOR patch=$PATCH branch=$BRANCH sha=$SHA alias=$ALIAS_MMP"
+          if [ "$MMP" != "1.2.3" ] || [ "$MAJOR" != "1" ] || [ "$MINOR" != "2" ] || [ "$PATCH" != "3" ]; then
+            echo "FAIL: expected version 1.2.3"; exit 1
+          fi
+          if [ "$ALIAS_MMP" != "$MMP" ]; then
+            echo "FAIL: GitVersion_MajorMinorPatch alias mismatch"; exit 1
+          fi
+          case "$SEMVER" in
+            1.2.3*) ;;
+            *) echo "FAIL: semVer should start with 1.2.3"; exit 1 ;;
+          esac
+          if [ -z "$BRANCH" ]; then
+            echo "FAIL: branchName is empty"; exit 1
+          fi
+          EXPECTED_SHA="$(git -C "$RUNNER_TEMP/target-repo" rev-parse HEAD)"
+          if [ "$SHA" != "$EXPECTED_SHA" ]; then
+            echo "FAIL: sha mismatch (expected $EXPECTED_SHA)"; exit 1
+          fi
+          echo "PASS"

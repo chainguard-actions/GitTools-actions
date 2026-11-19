@@ -1,0 +1,226 @@
+import * as path from 'node:path'
+import * as fs from 'node:fs/promises'
+import * as crypto from 'node:crypto'
+import { type ExecResult } from '@agents/common'
+import { ArgumentsBuilder, DotnetTool, keysOf } from '@tools/common'
+import { type CommandSettings, type ExecuteSettings, type GitVersionOutput } from './models'
+import { GitVersionSettingsProvider, type IGitVersionSettingsProvider } from './settings'
+
+export class GitVersionTool extends DotnetTool {
+    get packageName(): string {
+        return 'GitVersion.Tool'
+    }
+
+    get toolName(): string {
+        return 'dotnet-gitversion'
+    }
+
+    get toolPathVariable(): string {
+        return 'GITVERSION_PATH'
+    }
+
+    get versionRange(): string | null {
+        return '>=7.0.0 <7.1.0'
+    }
+
+    protected override satisfiesVersionRange(version: string, includePrerelease: boolean): boolean {
+        // Compare the release version so previews follow the same version boundaries as stable releases.
+        const releaseVersion = includePrerelease ? version.split('-', 1)[0] : version
+        return super.satisfiesVersionRange(releaseVersion, includePrerelease)
+    }
+
+    protected get installFramework(): string {
+        return 'net10.0'
+    }
+
+    override disableTelemetry(): void {
+        super.disableTelemetry()
+        this.buildAgent.setVariable('GITVERSION_TELEMETRY_OPTOUT', 'true')
+    }
+
+    get settingsProvider(): IGitVersionSettingsProvider {
+        return new GitVersionSettingsProvider(this.buildAgent)
+    }
+
+    async executeJson(): Promise<ExecResult & { outputFile?: string }> {
+        const settings = this.settingsProvider.getExecuteSettings()
+        const workDir = await this.getRepoDir(settings)
+
+        await this.checkShallowClone(settings, workDir)
+
+        await fs.mkdir(this.buildAgent.tempDir, { recursive: true })
+        const outputFile = path.join(this.buildAgent.tempDir, `gitversion-${crypto.randomUUID()}.json`)
+        this.buildAgent.debug(`Writing GitVersion variables to file: ${outputFile}`)
+        const args = await this.getExecuteArguments(workDir, settings, outputFile)
+
+        await this.setDotnetRoot()
+        const result = await this.executeTool(args)
+        return { ...result, outputFile }
+    }
+
+    async executeCommand(): Promise<ExecResult> {
+        const settings = this.settingsProvider.getCommandSettings()
+        const workDir = await this.getRepoDir(settings)
+
+        await this.checkShallowClone(settings, workDir)
+
+        const args = this.getCommandArguments(workDir, settings)
+
+        await this.setDotnetRoot()
+        return await this.executeTool(args)
+    }
+
+    writeGitVersionToAgent(output: GitVersionOutput): void {
+        for (const property of keysOf(output)) {
+            const name = this.toCamelCase(property)
+            try {
+                const value = output[property]?.toString() ?? ''
+                this.buildAgent.setOutput(name, value)
+                this.buildAgent.setOutput(`GitVersion_${property}`, value)
+                this.buildAgent.setVariable(name, value)
+                this.buildAgent.setVariable(`GitVersion_${property}`, value)
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                this.buildAgent.error(`Unable to set output/variable for ${property}: ${message}`)
+            }
+        }
+    }
+
+    updateBuildNumber(): void {
+        const settings = this.settingsProvider.getExecuteSettings()
+        if (settings.buildNumberFormat) {
+            const buildNumber = this.buildAgent.getExpandedString(settings.buildNumberFormat)
+            this.buildAgent.updateBuildNumber(buildNumber)
+        } else {
+            this.buildAgent.debug('No buildNumberFormat provided. Skipping build number update.')
+        }
+    }
+
+    protected async getRepoDir(settings: ExecuteSettings | CommandSettings): Promise<string> {
+        return await super.getRepoPath(settings.targetPath)
+    }
+
+    protected async getExecuteArguments(workDir: string, options: ExecuteSettings, outputFile?: string): Promise<string[]> {
+        const builder = new ArgumentsBuilder().addArgument(workDir)
+
+        if (outputFile) {
+            builder.addArgument('--output').addArgument('file').addArgument('--output-file').addArgument(outputFile)
+        } else {
+            builder.addArgument('--output').addArgument('json')
+        }
+
+        builder.addArgument('--log-file').addArgument('console')
+
+        const {
+            disableCache,
+            disableNormalization,
+            configFilePath,
+            overrideConfig,
+            updateAssemblyInfo,
+            updateAssemblyInfoFilename,
+            updateProjectFiles,
+            updateWixVersionFile,
+            verbosity
+            //
+        } = options
+
+        if (disableCache) {
+            builder.addArgument('--no-cache')
+        }
+
+        if (disableNormalization) {
+            builder.addArgument('--no-normalize')
+        }
+
+        if (configFilePath) {
+            if (await this.isValidInputFile(workDir, configFilePath)) {
+                builder.addArgument('--config').addArgument(configFilePath)
+            } else {
+                throw new Error(`GitVersion configuration file not found at ${configFilePath}`)
+            }
+        }
+
+        if (overrideConfig) {
+            for (const [index, entry] of overrideConfig.entries()) {
+                const config = entry.trim()
+                if (!/^[^\s=]+=[^\r\n]*$/.test(config)) {
+                    throw new Error(
+                        `Invalid overrideConfig entry at position ${index + 1}. Expected key=value with no whitespace in the key or line breaks in the value.`
+                    )
+                }
+                // GitVersion validates the public path and value for the selected configuration layout.
+                builder.addArgument('--override-config').addArgument(config)
+            }
+        }
+
+        if (updateAssemblyInfo) {
+            builder.addArgument('--update-assembly-info')
+
+            // You can specify 'updateAssemblyInfo' without 'updateAssemblyInfoFilename'.
+            if (updateAssemblyInfoFilename) {
+                if (await this.isValidInputFile(workDir, updateAssemblyInfoFilename)) {
+                    builder.addArgument(updateAssemblyInfoFilename)
+                } else {
+                    throw new Error(`AssemblyInfoFilename file not found at ${updateAssemblyInfoFilename}`)
+                }
+            }
+        }
+
+        if (updateProjectFiles) {
+            builder.addArgument('--update-project-files')
+        }
+
+        if (updateWixVersionFile) {
+            builder.addArgument('--update-wix-version-file')
+        }
+
+        if (verbosity) {
+            builder.addArgument('--verbosity').addArgument(verbosity)
+        }
+
+        return builder.build()
+    }
+
+    protected getCommandArguments(workDir: string, options: CommandSettings): string[] {
+        const builder = new ArgumentsBuilder().addArgument(workDir)
+
+        const commandArguments = ArgumentsBuilder.parseArgumentString(options.arguments || '')
+        // Configuration validation rejects calculation/logging options, including the action's default verbosity.
+        const isConfigValidation = commandArguments[0] === 'config' && commandArguments[1] === 'validate'
+        if (options.verbosity && !isConfigValidation) {
+            builder.addArgument('--verbosity').addArgument(options.verbosity)
+        }
+
+        builder.addArguments(commandArguments)
+
+        return builder.build()
+    }
+
+    private async checkShallowClone(settings: ExecuteSettings | CommandSettings, workDir: string): Promise<void> {
+        if (!settings.disableShallowCloneCheck) {
+            const isShallowResult = await this.execute('git', ['-C', workDir, 'rev-parse', '--is-shallow-repository'])
+            if (isShallowResult.code === 0 && isShallowResult.stdout?.trim() === 'true') {
+                throw new Error(
+                    'The repository is shallow. Consider disabling shallow clones. See https://github.com/GitTools/actions/blob/main/docs/cloning.md for more information.'
+                )
+            }
+        }
+    }
+
+    async readGitVersionOutput(outputFile: string): Promise<GitVersionOutput> {
+        const content = await fs.readFile(outputFile, 'utf8')
+        const output = JSON.parse(content) as GitVersionOutput
+        // Clean up the temporary file
+        await fs.unlink(outputFile).catch(() => {
+            // Ignore errors if file doesn't exist
+        })
+        return output
+    }
+
+    private toCamelCase(input: string): string {
+        return input.replace(/(?:^\w)|(?:[A-Z]|\b\w)|(?:\s+)/g, function (match, index) {
+            if (+match === 0) return '' // or if (/\s+/.test(match)) for white spaces
+            return index === 0 ? match.toLowerCase() : match.toUpperCase()
+        })
+    }
+}

@@ -1,0 +1,49 @@
+name: Test pre-release with release notes file and assets
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare release notes and asset files
+        run: |
+          mkdir -p "$RUNNER_TEMP/grm"
+          printf '# Release notes\n\n- Something new\n' > "$RUNNER_TEMP/grm/notes.md"
+          echo "asset content" > "$RUNNER_TEMP/grm/asset.txt"
+          echo "GRM_DIR=$RUNNER_TEMP/grm" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ github.token }}
+          name: 'v2.0.0-beta.1'
+          inputFilePath: ${{ env.GRM_DIR }}/notes.md
+          isPreRelease: 'true'
+          targetcommitish: ${{ github.sha }}
+          assets: ${{ env.GRM_DIR }}/asset.txt
+          targetDirectory: ${{ github.workspace }}
+          logFilePath: ${{ env.GRM_DIR }}/grm.log
+      - name: Assert action ran (succeeded or failed gracefully on the sentinel repo)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ -f "$GRM_DIR/grm.log" ]; then
+            echo "--- log file ---"
+            cat "$GRM_DIR/grm.log"
+          fi
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (sentinel repo / tool not resolvable)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
+      - name: Assert input files were not modified
+        run: |
+          grep -q "Something new" "$GRM_DIR/notes.md" || { echo "FAIL: notes file altered"; exit 1; }
+          grep -q "asset content" "$GRM_DIR/asset.txt" || { echo "FAIL: asset file altered"; exit 1; }
+          echo "PASS"

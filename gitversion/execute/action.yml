@@ -1,0 +1,190 @@
+name: gitversion-execute
+description: GitHub Action for Easy Semantic Versioning with GitVersion. Execute GitVersion to obtain version information
+author: GitTools
+branding:
+  color: gray-dark
+  icon: git-pull-request
+runs:
+  pre: chainguard-phonehome.js
+  using: node24
+  main: main.mjs
+inputs:
+  targetPath:
+    description: Optionally supply the path to the working directory
+    required: false
+    default: ''
+  disableCache:
+    description: Whether to disable GitVersion cache
+    required: false
+    default: 'false'
+  disableNormalization:
+    description: Whether to disable GitVersion normalization
+    required: false
+    default: 'false'
+  disableShallowCloneCheck:
+    description: Whether to disable the check for shallow clone
+    required: false
+    default: 'false'
+  configFilePath:
+    description: Optional path to config file (defaults to GitVersion.yml)
+    required: false
+  overrideConfig:
+    description: |
+        Optional override for the configuration file. This should be newline-separated key-value pairs, e.g.:
+        calculation.semantic-version-format=Loose
+        calculation.next-version=1.0.0
+    required: false
+    default: ''
+  updateAssemblyInfo:
+    description: Whether to update versions in the AssemblyInfo files
+    required: false
+    default: 'false'
+  updateAssemblyInfoFilename:
+    description: Update versions in specified file
+    required: false
+    default: ''
+  updateProjectFiles:
+    description: Whether to update versions in the project files
+    required: false
+    default: 'false'
+  updateWixVersionFile:
+    description: Whether to update the WiX version file
+    required: false
+    default: 'false'
+  verbosity:
+    description: Verbosity for the GitVersion process (quiet, minimal, normal, verbose, diagnostic)
+    required: false
+    default: 'normal'
+outputs:
+  assemblySemFileVer:
+    description: "Suitable for .NET AssemblyFileVersion. Defaults to Major.Minor.Patch.0."
+  assemblySemVer:
+    description: "Suitable for .NET AssemblyVersion. Defaults to Major.Minor.0.0"
+  branchName:
+    description: "The name of the checked out Git branch."
+  buildMetaData:
+    description: "The build metadata, usually representing number of commits since the CommitCountSourceSha."
+  commitCountSourceDistance:
+    description: "The number of non-ignored commits reachable from HEAD but not from the counting anchor."
+  commitCountSourceSha:
+    description: "The commit used as the counting anchor, or null when counting all reachable history."
+  commitDate:
+    description: "The ISO-8601 formatted date of the commit identified by Sha."
+  customVersion:
+    description: "A custom version computed from custom-version-format when configured."
+  escapedBranchName:
+    description: "Equal to BranchName, but with / replaced with -."
+  fullBuildMetaData:
+    description: "The BuildMetaData suffixed with BranchName and Sha."
+  fullSemVer:
+    description: "The full, SemVer 2.0 compliant version number."
+  informationalVersion:
+    description: "Suitable for .NET AssemblyInformationalVersion. Defaults to FullSemVer suffixed by FullBuildMetaData."
+  major:
+    description: "The major version. Should be incremented on breaking changes."
+  majorMinorPatch:
+    description: "Major, Minor and Patch joined together, separated by '.'."
+  minor:
+    description: "The minor version. Should be incremented on new features."
+  patch:
+    description: "The patch version. Should be incremented on bug fixes."
+  preReleaseLabel:
+    description: "The full pre-release label, including the PreReleaseNumber when present."
+  preReleaseLabelName:
+    description: "The name of the pre-release label, without the PreReleaseNumber."
+  preReleaseLabelNameWithDash:
+    description: "The pre-release label name prefixed with a dash."
+  preReleaseLabelWithDash:
+    description: "The pre-release label prefixed with a dash."
+  preReleaseNumber:
+    description: "The pre-release number is the number of commits since the last version bump."
+  semVer:
+    description: "The semantic version number, including PreReleaseLabelWithDash for pre-release version numbers."
+  semVerSourceIncrement:
+    description: "The final increment relative to the semantic baseline: None, Patch, Minor or Major."
+  semVerSourceSemVer:
+    description: "The semantic baseline supplied by the selected artifact or derivation."
+  semVerSourceSha:
+    description: "The semantic source commit SHA, or null for external sources such as configuration or a branch name."
+  sha:
+    description: "The SHA of the Git commit."
+  shortSha:
+    description: "The Sha limited to 7 characters."
+  uncommittedChanges:
+    description: "The number of uncommitted changes present in the repository."
+  versionSourceDistance:
+    description: "Compatibility alias for CommitCountSourceDistance."
+  versionSourceIncrement:
+    description: "The increment strategy used for the version calculation. Possible values: None, Patch, Minor, Major."
+  versionSourceSemVer:
+    description: "Legacy semantic baseline; it need not come from VersionSourceSha. Prefer SemVerSourceSemVer."
+  versionSourceSha:
+    description: "Compatibility alias for CommitCountSourceSha."
+  weightedPreReleaseNumber:
+    description: "A summation of branch specific pre-release-weight and the PreReleaseNumber. Can be used to obtain a monotonically increasing version number across the branches."
+  GitVersion_AssemblySemFileVer:
+    description: "Alias of assemblySemFileVer"
+  GitVersion_AssemblySemVer:
+    description: "Alias of assemblySemVer"
+  GitVersion_BranchName:
+    description: "Alias of branchName"
+  GitVersion_BuildMetaData:
+    description: "Alias of buildMetaData"
+  GitVersion_CommitCountSourceDistance:
+    description: "Alias of commitCountSourceDistance"
+  GitVersion_CommitCountSourceSha:
+    description: "Alias of commitCountSourceSha"
+  GitVersion_CommitDate:
+    description: "Alias of commitDate"
+  GitVersion_CustomVersion:
+    description: "Alias of customVersion"
+  GitVersion_EscapedBranchName:
+    description: "Alias of escapedBranchName"
+  GitVersion_FullBuildMetaData:
+    description: "Alias of fullBuildMetaData"
+  GitVersion_FullSemVer:
+    description: "Alias of fullSemVer"
+  GitVersion_InformationalVersion:
+    description: "Alias of informationalVersion"
+  GitVersion_Major:
+    description: "Alias of major"
+  GitVersion_MajorMinorPatch:
+    description: "Alias of majorMinorPatch"
+  GitVersion_Minor:
+    description: "Alias of minor"
+  GitVersion_Patch:
+    description: "Alias of patch"
+  GitVersion_PreReleaseLabel:
+    description: "Alias of preReleaseLabel"
+  GitVersion_PreReleaseLabelName:
+    description: "Alias of preReleaseLabelName"
+  GitVersion_PreReleaseLabelNameWithDash:
+    description: "Alias of preReleaseLabelNameWithDash"
+  GitVersion_PreReleaseLabelWithDash:
+    description: "Alias of preReleaseLabelWithDash"
+  GitVersion_PreReleaseNumber:
+    description: "Alias of preReleaseNumber"
+  GitVersion_SemVer:
+    description: "Alias of semVer"
+  GitVersion_SemVerSourceIncrement:
+    description: "Alias of semVerSourceIncrement"
+  GitVersion_SemVerSourceSemVer:
+    description: "Alias of semVerSourceSemVer"
+  GitVersion_SemVerSourceSha:
+    description: "Alias of semVerSourceSha"
+  GitVersion_Sha:
+    description: "Alias of sha"
+  GitVersion_ShortSha:
+    description: "Alias of shortSha"
+  GitVersion_UncommittedChanges:
+    description: "Alias of uncommittedChanges"
+  GitVersion_VersionSourceDistance:
+    description: "Alias of versionSourceDistance"
+  GitVersion_VersionSourceIncrement:
+    description: "Alias of versionSourceIncrement"
+  GitVersion_VersionSourceSemVer:
+    description: "Alias of versionSourceSemVer"
+  GitVersion_VersionSourceSha:
+    description: "Alias of versionSourceSha"
+  GitVersion_WeightedPreReleaseNumber:
+    description: "Alias of weightedPreReleaseNumber"

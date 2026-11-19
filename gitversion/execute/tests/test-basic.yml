@@ -1,0 +1,75 @@
+name: Test basic usage
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion tool (replaces gitversion/setup)
+        run: |
+          set -e
+          git config --global --add safe.directory '*'
+          DOTNET_DIR="$HOME/.dotnet"
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 10.0 --install-dir "$DOTNET_DIR"
+          export DOTNET_ROOT="$DOTNET_DIR"
+          export DOTNET_ROLL_FORWARD=Major
+          export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1
+          "$DOTNET_DIR/dotnet" tool install GitVersion.Tool --tool-path "$HOME/gitversion-tool"
+          ls -la "$HOME/gitversion-tool"
+          {
+            echo "DOTNET_ROOT=$DOTNET_DIR"
+            echo "DOTNET_ROLL_FORWARD=Major"
+            echo "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1"
+            echo "DOTNET_CLI_TELEMETRY_OPTOUT=1"
+            echo "GITVERSION_PATH=$HOME/gitversion-tool"
+          } >> "$GITHUB_ENV"
+          echo "$DOTNET_DIR" >> "$GITHUB_PATH"
+          echo "$HOME/gitversion-tool" >> "$GITHUB_PATH"
+      - id: action
+        uses: .
+        with:
+          disableShallowCloneCheck: 'true'
+      - name: Assert version outputs
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MINOR: ${{ steps.action.outputs.minor }}
+          PATCH: ${{ steps.action.outputs.patch }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+          SEMVER: ${{ steps.action.outputs.semVer }}
+          ALIAS_SEMVER: ${{ steps.action.outputs.GitVersion_SemVer }}
+          FULLSEMVER: ${{ steps.action.outputs.fullSemVer }}
+          SHA: ${{ steps.action.outputs.sha }}
+          SHORTSHA: ${{ steps.action.outputs.shortSha }}
+        run: |
+          echo "major=$MAJOR minor=$MINOR patch=$PATCH mmp=$MMP"
+          echo "semVer=$SEMVER alias=$ALIAS_SEMVER fullSemVer=$FULLSEMVER"
+          echo "sha=$SHA shortSha=$SHORTSHA"
+          for v in "$MAJOR" "$MINOR" "$PATCH"; do
+            if ! echo "$v" | grep -qE '^[0-9]+$'; then
+              echo "FAIL: '$v' is not a number"; exit 1
+            fi
+          done
+          if [ "$MMP" != "$MAJOR.$MINOR.$PATCH" ]; then
+            echo "FAIL: majorMinorPatch mismatch"; exit 1
+          fi
+          if [ -z "$SEMVER" ] || [ "$SEMVER" != "$ALIAS_SEMVER" ]; then
+            echo "FAIL: semVer empty or alias mismatch"; exit 1
+          fi
+          case "$SEMVER" in
+            "$MMP"*) ;;
+            *) echo "FAIL: semVer does not start with majorMinorPatch"; exit 1 ;;
+          esac
+          HEAD_SHA="$(git rev-parse HEAD)"
+          echo "HEAD=$HEAD_SHA"
+          if [ "$SHA" != "$HEAD_SHA" ]; then
+            echo "FAIL: sha does not match HEAD"; exit 1
+          fi
+          if [ "$SHORTSHA" != "${HEAD_SHA:0:7}" ]; then
+            echo "FAIL: shortSha mismatch"; exit 1
+          fi
+          echo "PASS"

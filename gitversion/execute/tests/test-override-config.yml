@@ -1,0 +1,75 @@
+name: Test overrideConfig next-version
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install GitVersion tool (replaces gitversion/setup)
+        run: |
+          set -e
+          git config --global --add safe.directory '*'
+          DOTNET_DIR="$HOME/.dotnet"
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 10.0 --install-dir "$DOTNET_DIR"
+          export DOTNET_ROOT="$DOTNET_DIR"
+          export DOTNET_ROLL_FORWARD=Major
+          export DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+          export DOTNET_CLI_TELEMETRY_OPTOUT=1
+          "$DOTNET_DIR/dotnet" tool install GitVersion.Tool --tool-path "$HOME/gitversion-tool"
+          {
+            echo "DOTNET_ROOT=$DOTNET_DIR"
+            echo "DOTNET_ROLL_FORWARD=Major"
+            echo "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1"
+            echo "DOTNET_CLI_TELEMETRY_OPTOUT=1"
+            echo "GITVERSION_PATH=$HOME/gitversion-tool"
+          } >> "$GITHUB_ENV"
+          echo "$DOTNET_DIR" >> "$GITHUB_PATH"
+          echo "$HOME/gitversion-tool" >> "$GITHUB_PATH"
+      - name: Create an untagged repository (main + act-harness branched from it)
+        run: |
+          set -e
+          REPO="$RUNNER_TEMP/override-repo"
+          REMOTE="$RUNNER_TEMP/override-remote.git"
+          rm -rf "$REPO" "$REMOTE"
+          git init -q --bare "$REMOTE"
+          mkdir -p "$REPO"
+          cd "$REPO"
+          # act-harness must have a source branch (main) or GitVersion treats it as orphaned
+          git init -q -b main
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          echo hello > README.md
+          git add README.md
+          git commit -q -m "initial"
+          git checkout -q -b act-harness
+          echo world >> README.md
+          git commit -q -am "second"
+          git remote add origin "$REMOTE"
+          git push -q origin main act-harness
+          git fetch -q origin
+          git branch -u origin/act-harness
+          git log --oneline --decorate --all
+      - id: action
+        uses: .
+        with:
+          targetPath: ${{ runner.temp }}/override-repo
+          overrideConfig: |
+            calculation.next-version=7.5.0
+      - name: Assert next-version override applied
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MINOR: ${{ steps.action.outputs.minor }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+          SEMVER: ${{ steps.action.outputs.semVer }}
+        run: |
+          echo "major=$MAJOR minor=$MINOR mmp=$MMP semVer=$SEMVER"
+          if [ "$MAJOR" != "7" ] || [ "$MINOR" != "5" ]; then
+            echo "FAIL: expected version 7.5.x from overrideConfig"; exit 1
+          fi
+          case "$SEMVER" in
+            7.5.*) ;;
+            *) echo "FAIL: semVer should start with 7.5."; exit 1 ;;
+          esac
+          echo "PASS"

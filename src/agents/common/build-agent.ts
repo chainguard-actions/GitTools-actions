@@ -1,0 +1,366 @@
+import * as os from 'node:os'
+import { randomUUID } from 'node:crypto'
+import { lock } from 'proper-lockfile'
+import { familySync, GLIBC, MUSL } from 'detect-libc'
+import { execFile as execFileNonPromise, ExecFileOptions } from 'node:child_process'
+import * as fs from 'node:fs/promises'
+import * as process from 'node:process'
+import * as path from 'node:path'
+import * as util from 'node:util'
+import * as semver from 'semver'
+import { lookPath } from './lookPath'
+import { type ExecResult } from './models'
+
+async function acquireToolCacheLock(directory: string): Promise<() => Promise<void>> {
+    await fs.mkdir(path.dirname(directory), { recursive: true })
+    // Heartbeats preserve live owners, including on shared hosts where PIDs are not unique.
+    // A killed owner stops updating the lock, allowing recovery after 30 seconds.
+    return await lock(directory, {
+        realpath: false,
+        stale: 30000,
+        update: 1000,
+        retries: { retries: 480, minTimeout: 250, maxTimeout: 250, factor: 1, randomize: false }
+    })
+}
+
+export interface IBuildAgent {
+    agentName: string
+    sourceDirVariable: string
+    tempDirVariable: string
+    cacheDirVariable: string
+
+    sourceDir: string
+    tempDir: string
+    cacheDir: string
+
+    addPath(inputPath: string): void
+
+    debug(message: string): void
+
+    info(message: string): void
+
+    warn(message: string): void
+
+    error(message: string): void
+
+    exec(exec: string, args: string[]): Promise<ExecResult>
+
+    getToolCachePath(tool: string, version: string): string
+
+    installToolInCache(tool: string, version: string, install: (directory: string) => Promise<void>, replaceExisting?: boolean): Promise<string>
+
+    cacheToolDirectory(sourceDir: string, tool: string, version: string): Promise<string>
+
+    directoryExists(dir: string): Promise<boolean>
+
+    removeDirectory(dir: string): Promise<void>
+
+    fileExists(file: string): Promise<boolean>
+
+    findLocalTool(toolName: string, versionSpec: string): Promise<string | null>
+
+    getInput(input: string, required?: boolean): string
+
+    getInput<T>(input: Extract<keyof T, string>, required?: boolean): string
+
+    getBooleanInput<T>(input: Extract<keyof T, string>, required?: boolean): boolean
+
+    getDelimitedInput<T>(input: Extract<keyof T, string>, delimiter: string, required?: boolean): string[]
+
+    getListInput<T>(input: Extract<keyof T, string>, required?: boolean): string[]
+
+    setSucceeded(message: string, done?: boolean): void
+
+    setFailed(message: string, done?: boolean): void
+
+    setOutput(name: string, value: string | undefined): void
+
+    getVariable(name: string): string | undefined
+
+    getVariableAsPath(name: string): string
+
+    getExpandedString(pattern: string): string
+
+    setVariable(name: string, value: string | undefined): void
+
+    updateBuildNumber: (version: string) => void
+
+    which(tool: string, check?: boolean): Promise<string>
+}
+
+export abstract class BuildAgentBase implements IBuildAgent {
+    abstract agentName: string
+    abstract sourceDirVariable: string
+    abstract tempDirVariable: string
+    abstract cacheDirVariable: string
+
+    abstract debug(message: string): void
+
+    abstract info(message: string): void
+
+    abstract warn(message: string): void
+
+    abstract error(message: string): void
+
+    abstract setSucceeded(message: string, done?: boolean): void
+
+    abstract setFailed(message: string, done?: boolean): void
+
+    abstract setOutput(name: string, value: string | undefined): void
+
+    abstract setVariable(name: string, value: string | undefined): void
+
+    abstract updateBuildNumber: (version: string) => void
+
+    get sourceDir(): string {
+        return this.getVariableAsPath(this.sourceDirVariable)?.replaceAll('\\', '/')
+    }
+
+    get tempDir(): string {
+        return this.getVariableAsPath(this.tempDirVariable)
+    }
+
+    get cacheDir(): string {
+        return this.getVariableAsPath(this.cacheDirVariable)
+    }
+
+    addPath(inputPath: string): void {
+        const envName = process.platform === 'win32' ? 'Path' : 'PATH'
+        const newPath = inputPath + path.delimiter + process.env[envName]
+        this.debug(`new Path: ${newPath}`)
+        process.env[envName] = newPath
+        process.env.Path = newPath
+        this.info(`Updated PATH: ${process.env[envName]}`)
+    }
+
+    getInput<T>(input: Extract<keyof T, string>, required?: boolean): string {
+        const inputProp = input.replaceAll(' ', '_').toUpperCase()
+        const val = this.getVariable(`INPUT_${inputProp}`)
+        if (required && !val) {
+            throw new Error(`Input required and not supplied: ${inputProp}`)
+        }
+        return val.trim()
+    }
+
+    getBooleanInput<T>(input: Extract<keyof T, string>, required?: boolean): boolean {
+        const inputValue = this.getInput(input, required)
+        return (inputValue || 'false').toLowerCase() === 'true'
+    }
+
+    getDelimitedInput<T>(input: Extract<keyof T, string>, delimiter: string, required?: boolean): string[] {
+        return this.getInput(input, required)
+            .split(delimiter)
+            .filter(x => {
+                if (x) {
+                    return x.trim()
+                }
+            })
+    }
+
+    getListInput<T>(input: Extract<keyof T, string>, required?: boolean): string[] {
+        return this.getDelimitedInput(input, '\n', required)
+    }
+
+    getVariable(name: string): string {
+        const value = (process.env[name] || '').trim()
+        this.debug(`getVariable - ${name}: ${value}`)
+        return value.trim()
+    }
+
+    getVariableAsPath(name: string): string {
+        return path.resolve(path.normalize(this.getVariable(name)))
+    }
+
+    /**
+     * Replaces environment variable references in a string with their values.
+     * Supports both $VAR and ${VAR} formats.
+     * Ignores invalid patterns like ${} or non-existing variables (replaced with empty string).
+     *
+     * @param pattern - The input string containing env variable placeholders.
+     * @returns The string with env variables expanded.
+     */
+    getExpandedString(pattern: string): string {
+        const expanded = pattern.replace(/\$([A-Za-z_]\w*|{([A-Za-z_]\w*)})/g, (_, whole: string, braced?: string) => {
+            const name = braced ?? whole
+            const value = process.env[name.toUpperCase()]
+            return value === undefined ? '' : value
+        })
+        this.debug(`getExpandedString - ${pattern}: ${expanded}`)
+        return expanded
+    }
+
+    async directoryExists(dir: string): Promise<boolean> {
+        return fs.stat(dir).then(
+            stats => stats.isDirectory(),
+            () => false
+        )
+    }
+
+    async removeDirectory(dir: string): Promise<void> {
+        await fs.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 1000 })
+    }
+
+    async fileExists(file: string): Promise<boolean> {
+        return fs.stat(file).then(
+            stats => stats.isFile(),
+            () => false
+        )
+    }
+
+    getToolCachePath(tool: string, version: string): string {
+        let platform: string = os.platform()
+        if (platform === 'linux') {
+            const libc = familySync()
+            if (libc !== GLIBC && libc !== MUSL) throw new Error('Unable to identify the Linux libc for the tool cache')
+            if (libc === MUSL) platform = 'linux-musl'
+        }
+        return path.join(this.cacheDir, tool, semver.clean(version) || version, `${platform}-${os.arch()}`)
+    }
+
+    async installToolInCache(tool: string, version: string, install: (directory: string) => Promise<void>, replaceExisting = false): Promise<string> {
+        const directory = this.getToolCachePath(tool, version)
+        const release = await acquireToolCacheLock(directory)
+        try {
+            await this.restoreToolCacheBackup(directory)
+            const complete = await this.fileExists(path.join(directory, '.complete'))
+            if (complete && !replaceExisting) return directory
+            const backup = complete ? `${directory}.backup-${randomUUID()}` : undefined
+            if (backup) await fs.rename(directory, backup)
+            else await fs.rm(directory, { recursive: true, force: true })
+            try {
+                await fs.mkdir(directory, { recursive: true })
+                await install(directory)
+                await fs.writeFile(path.join(directory, '.complete'), '')
+            } catch (error) {
+                await fs.rm(directory, { recursive: true, force: true })
+                if (backup) await fs.rename(backup, directory)
+                throw error
+            }
+            if (backup) await fs.rm(backup, { recursive: true, force: true })
+            return directory
+        } finally {
+            await release()
+        }
+    }
+
+    private async restoreToolCacheBackup(directory: string): Promise<void> {
+        if (await this.fileExists(path.join(directory, '.complete'))) return
+        const parent = path.dirname(directory)
+        const prefix = `${path.basename(directory)}.backup-`
+        const entries = await fs.readdir(parent, { withFileTypes: true })
+        const candidates = await Promise.all(
+            entries
+                .filter(entry => entry.isDirectory() && entry.name.startsWith(prefix))
+                .map(async entry => {
+                    const backup = path.join(parent, entry.name)
+                    if (!(await this.fileExists(path.join(backup, '.complete')))) return null
+                    return { backup, modified: (await fs.stat(backup)).mtimeMs }
+                })
+        )
+        const latest = candidates.filter(candidate => candidate !== null).sort((a, b) => b.modified - a.modified)[0]
+        if (latest) {
+            await fs.rm(directory, { recursive: true, force: true })
+            await fs.rename(latest.backup, directory)
+        }
+    }
+
+    async cacheToolDirectory(sourceDir: string, tool: string, version: string): Promise<string> {
+        if (!tool) {
+            throw new Error('tool is a required parameter')
+        }
+        if (!version) {
+            throw new Error('version is a required parameter')
+        }
+        if (!sourceDir) {
+            throw new Error('sourceDir is a required parameter')
+        }
+
+        const cacheRoot = this.cacheDir
+        if (!cacheRoot) {
+            this.debug('cache root not set')
+            return ''
+        }
+
+        version = semver.clean(version) || version
+        return this.installToolInCache(
+            tool,
+            version,
+            async destPath => {
+                this.debug(`Copying ${sourceDir} to ${destPath}`)
+                await fs.cp(sourceDir, destPath, {
+                    recursive: true,
+                    force: true,
+                    verbatimSymlinks: true,
+                    filter: source => source !== path.join(sourceDir, '.complete')
+                })
+                this.debug(`Caching ${tool}@${version} from ${sourceDir}`)
+            },
+            true
+        )
+    }
+
+    async findLocalTool(toolName: string, versionSpec: string): Promise<string | null> {
+        if (!toolName) {
+            throw new Error('toolName is a required parameter')
+        }
+        if (!versionSpec) {
+            throw new Error('versionSpec is a required parameter')
+        }
+
+        const cacheRoot = this.cacheDir
+        if (!cacheRoot) {
+            this.debug('cache root not set')
+            return null
+        }
+
+        versionSpec = semver.clean(versionSpec) || versionSpec
+        this.info(`Looking for local tool ${toolName}@${versionSpec}`)
+        const toolPath = this.getToolCachePath(toolName, versionSpec)
+        if ((await this.directoryExists(toolPath)) && (await this.fileExists(path.join(toolPath, '.complete')))) {
+            this.info(`Found tool ${toolName}@${versionSpec} at ${toolPath}`)
+            return toolPath
+        } else {
+            this.info(`Directory ${toolPath} not found`)
+            return null
+        }
+    }
+
+    async exec(cmd: string, args: string[]): Promise<ExecResult> {
+        const execFile = util.promisify(execFileNonPromise)
+
+        try {
+            const commandOptions: ExecFileOptions = { maxBuffer: 1024 * 1024 * 10 } // 10MB
+            const { stdout, stderr } = await execFile(cmd, args, commandOptions)
+            const normalizedStdout = typeof stdout === 'string' ? stdout : stdout?.toString()
+            const normalizedStderr = typeof stderr === 'string' ? stderr : stderr?.toString()
+            return {
+                code: 0,
+                error: null,
+                stderr: normalizedStderr,
+                stdout: normalizedStdout
+            }
+        } catch (e) {
+            const error = e as Error & { code?: number | string; stderr?: string | Buffer; stdout?: string | Buffer }
+            const normalizedStdout = typeof error.stdout === 'string' ? error.stdout : error.stdout?.toString()
+            const normalizedStderr = typeof error.stderr === 'string' ? error.stderr : (error.stderr?.toString() ?? error.message)
+            const exitCode = typeof error.code === 'number' ? error.code : -1
+            return {
+                code: exitCode,
+                error,
+                stderr: normalizedStderr,
+                stdout: normalizedStdout
+            }
+        }
+    }
+
+    async which(tool: string, _check?: boolean): Promise<string> {
+        this.debug(`looking for tool '${tool}' in PATH`)
+        let toolPath = await lookPath(tool)
+        if (toolPath) {
+            toolPath = path.resolve(toolPath)
+            this.debug(`found tool '${tool}' in PATH: ${toolPath}`)
+            return toolPath
+        }
+        throw new Error(`Unable to locate executable file: ${tool}`)
+    }
+}

@@ -1,0 +1,67 @@
+name: Test command with override-config next-version
+on:
+  workflow_dispatch:
+env:
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_NOLOGO: "true"
+  DOTNET_ROLL_FORWARD: Major
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install .NET SDKs and GitVersion.Tool 7.0.0 (POSIX-style args, supports --verbosity)
+        run: |
+          set -e
+          DOTNET_DIR="$RUNNER_TEMP/dotnet"
+          curl -sSfL https://dot.net/v1/dotnet-install.sh -o "$RUNNER_TEMP/dotnet-install.sh"
+          bash "$RUNNER_TEMP/dotnet-install.sh" --channel 8.0 --install-dir "$DOTNET_DIR"
+          bash "$RUNNER_TEMP/dotnet-install.sh" --channel 10.0 --install-dir "$DOTNET_DIR"
+          export DOTNET_ROOT="$DOTNET_DIR"
+          export PATH="$DOTNET_DIR:$PATH"
+          GV_DIR="$RUNNER_TEMP/gitversion-tool"
+          dotnet tool install GitVersion.Tool --version 7.0.0 --tool-path "$GV_DIR"
+          "$GV_DIR/dotnet-gitversion" --version || true
+          echo "DOTNET_ROOT=$DOTNET_DIR" >> "$GITHUB_ENV"
+          echo "GITVERSION_PATH=$GV_DIR" >> "$GITHUB_ENV"
+          echo "$DOTNET_DIR" >> "$GITHUB_PATH"
+          echo "$GV_DIR" >> "$GITHUB_PATH"
+      - name: Create a fresh full-history repo without tags and a single origin remote
+        run: |
+          set -e
+          REPO="$GITHUB_WORKSPACE/gv-repo-ov"
+          REMOTE="$RUNNER_TEMP/gv-repo-ov-remote.git"
+          rm -rf "$REPO" "$REMOTE"
+          mkdir -p "$REPO"
+          cd "$REPO"
+          git init -b main .
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          echo one > file.txt && git add file.txt && git commit -m "first"
+          git branch act-harness HEAD
+          git init --bare "$REMOTE"
+          git remote add origin "$REMOTE"
+          git push origin --all
+          git fetch origin
+          git remote -v
+      - id: action
+        uses: .
+        with:
+          targetPath: ${{ github.workspace }}/gv-repo-ov
+          arguments: --override-config calculation.next-version=2.0.0 --output file --output-file ${{ runner.temp }}/gv-ov.json
+      - name: Assert MajorMinorPatch is 2.0.0
+        run: |
+          F="$RUNNER_TEMP/gv-ov.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: output file $F not created"
+            exit 1
+          fi
+          cat "$F"
+          MMP=$(sed -n 's/.*"MajorMinorPatch": *"\([^"]*\)".*/\1/p' "$F" | head -n1)
+          echo "MajorMinorPatch: $MMP"
+          if [ "$MMP" != "2.0.0" ]; then
+            echo "FAIL: expected MajorMinorPatch 2.0.0"
+            exit 1
+          fi
+          echo "PASS"

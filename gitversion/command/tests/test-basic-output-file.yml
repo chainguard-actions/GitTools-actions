@@ -1,0 +1,72 @@
+name: Test basic command with json output file
+on:
+  workflow_dispatch:
+env:
+  DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_NOLOGO: "true"
+  DOTNET_ROLL_FORWARD: Major
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install .NET SDKs and GitVersion.Tool 7.0.0 (POSIX-style args, supports --verbosity)
+        run: |
+          set -e
+          DOTNET_DIR="$RUNNER_TEMP/dotnet"
+          curl -sSfL https://dot.net/v1/dotnet-install.sh -o "$RUNNER_TEMP/dotnet-install.sh"
+          bash "$RUNNER_TEMP/dotnet-install.sh" --channel 8.0 --install-dir "$DOTNET_DIR"
+          bash "$RUNNER_TEMP/dotnet-install.sh" --channel 10.0 --install-dir "$DOTNET_DIR"
+          export DOTNET_ROOT="$DOTNET_DIR"
+          export PATH="$DOTNET_DIR:$PATH"
+          GV_DIR="$RUNNER_TEMP/gitversion-tool"
+          dotnet tool install GitVersion.Tool --version 7.0.0 --tool-path "$GV_DIR"
+          "$GV_DIR/dotnet-gitversion" --version || true
+          echo "DOTNET_ROOT=$DOTNET_DIR" >> "$GITHUB_ENV"
+          echo "GITVERSION_PATH=$GV_DIR" >> "$GITHUB_ENV"
+          echo "$DOTNET_DIR" >> "$GITHUB_PATH"
+          echo "$GV_DIR" >> "$GITHUB_PATH"
+      - name: Create a fresh full-history repo with a tag and a single origin remote
+        run: |
+          set -e
+          REPO="$GITHUB_WORKSPACE/gv-repo"
+          REMOTE="$RUNNER_TEMP/gv-repo-remote.git"
+          rm -rf "$REPO" "$REMOTE"
+          mkdir -p "$REPO"
+          cd "$REPO"
+          git init -b main .
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          echo one > file.txt && git add file.txt && git commit -m "first"
+          echo two >> file.txt && git commit -am "second"
+          git tag v1.2.3
+          # Build-server mode requires exactly one remote; make the harness branch exist too
+          git branch act-harness HEAD
+          git init --bare "$REMOTE"
+          git remote add origin "$REMOTE"
+          git push origin --all
+          git push origin --tags
+          git fetch origin
+          git remote -v
+      - id: action
+        uses: .
+        with:
+          targetPath: ${{ github.workspace }}/gv-repo
+          disableShallowCloneCheck: "false"
+          arguments: --output file --output-file ${{ runner.temp }}/gv-basic.json
+      - name: Assert output file contains SemVer 1.2.3
+        run: |
+          F="$RUNNER_TEMP/gv-basic.json"
+          if [ ! -f "$F" ]; then
+            echo "FAIL: output file $F not created"
+            exit 1
+          fi
+          cat "$F"
+          SEMVER=$(sed -n 's/.*"SemVer": *"\([^"]*\)".*/\1/p' "$F" | head -n1)
+          echo "SemVer: $SEMVER"
+          if [ "$SEMVER" != "1.2.3" ]; then
+            echo "FAIL: expected SemVer 1.2.3"
+            exit 1
+          fi
+          echo "PASS"

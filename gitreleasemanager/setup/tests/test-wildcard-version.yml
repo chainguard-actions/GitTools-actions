@@ -1,0 +1,37 @@
+name: Test wildcard versionSpec with preferLatestVersion
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure .NET SDK is available
+        run: |
+          if ! command -v dotnet >/dev/null 2>&1; then
+            curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+            bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+            echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+            echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+          fi
+      - id: action
+        uses: .
+        with:
+          versionSpec: '0.20.x'
+          preferLatestVersion: 'true'
+      - name: Assert GitReleaseManager 0.20.x is installed
+        run: |
+          TOOL="$(command -v dotnet-gitreleasemanager || true)"
+          echo "tool: $TOOL"
+          if [ -z "$TOOL" ]; then
+            echo "FAIL: dotnet-gitreleasemanager not on PATH"
+            exit 1
+          fi
+          OUT="$(dotnet-gitreleasemanager --version 2>&1 || true)"
+          echo "version output: $OUT"
+          if echo "$TOOL $OUT" | grep -q '0\.20\.'; then
+            echo "PASS"
+          else
+            echo "FAIL: expected a 0.20.x version"
+            exit 1
+          fi

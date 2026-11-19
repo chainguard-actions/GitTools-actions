@@ -1,0 +1,56 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node",
+            "request": "launch",
+            "preLaunchTask": "Build-Local",
+            "name": "Debug Local Setup GitVersion",
+            "program": "${workspaceFolder}/dist/local/gitversion/setup/bundle.js",
+            "outFiles": [ "${workspaceFolder}/**/*.js" ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "preLaunchTask": "Build-Azure",
+            "name": "Debug Azure Setup GitVersion",
+            "program": "${workspaceFolder}/dist/azure/gitversion/setup/bundle.js",
+            "outFiles": [ "${workspaceFolder}/**/*.js" ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "preLaunchTask": "Build-GitHub",
+            "name": "Debug GitHub Setup GitVersion",
+            "program": "${workspaceFolder}/dist/github/gitversion/setup/bundle.js",
+            "outFiles": [ "${workspaceFolder}/**/*.js" ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "preLaunchTask": "Build-Local",
+            "name": "Debug Local Execute GitVersion",
+            "program": "${workspaceFolder}/dist/local/gitversion/execute/bundle.js",
+            "outFiles": [ "${workspaceFolder}/**/*.js" ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "preLaunchTask": "Build-Azure",
+            "name": "Debug Azure Execute GitVersion",
+            "program": "${workspaceFolder}/dist/azure/gitversion/execute/bundle.js",
+            "outFiles": [ "${workspaceFolder}/**/*.js" ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "preLaunchTask": "Build-GitHub",
+            "name": "Debug GitHub Execute GitVersion",
+            "program": "${workspaceFolder}/dist/github/gitversion/execute/bundle.js",
+            "outFiles": [ "${workspaceFolder}/**/*.js" ]
+        },
+    ]
+}

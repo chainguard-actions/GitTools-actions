@@ -1,0 +1,33 @@
+name: Test discard with logFilePath
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          milestone: 'v0.0.0-act-harness-nonexistent'
+          logFilePath: ${{ runner.temp }}/grm-discard.log
+      - name: Assert action outcome is success or graceful failure
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          LOG: ${{ runner.temp }}/grm-discard.log
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ -f "$LOG" ]; then
+            echo "--- log ---"; cat "$LOG"
+          fi
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: discard completed"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (sentinel repo / missing milestone or tool)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

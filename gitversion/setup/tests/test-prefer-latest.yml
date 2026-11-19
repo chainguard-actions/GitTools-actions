@@ -1,0 +1,49 @@
+name: Test setup with preferLatestVersion
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_ROLL_FORWARD: Major
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure .NET SDK is available
+        run: |
+          if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks | grep -qE '^10\.'; then
+            echo "dotnet already present"; dotnet --list-sdks; exit 0
+          fi
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 10.0 --install-dir "$HOME/.dotnet"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+      - id: action
+        uses: .
+        with:
+          versionSpec: '7.0.x'
+          preferLatestVersion: 'true'
+          ignoreFailedSources: 'true'
+      - name: Assert GitVersion tool is installed and is 7.0.x
+        run: |
+          echo "GITVERSION_PATH=${GITVERSION_PATH:-}"
+          BIN="$(command -v dotnet-gitversion || true)"
+          if [ -z "$BIN" ] && [ -n "${GITVERSION_PATH:-}" ]; then
+            BIN="$(find "$GITVERSION_PATH" -maxdepth 2 -name 'dotnet-gitversion' -type f 2>/dev/null | head -n1)"
+          fi
+          echo "binary: $BIN"
+          if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
+            echo "FAIL: dotnet-gitversion not found"
+            exit 1
+          fi
+          STORE="$(ls "$(dirname "$BIN")/.store/gitversion.tool" 2>/dev/null | head -n1 || true)"
+          echo "store version: $STORE"
+          RAW="$("$BIN" --version 2>&1 || true)"
+          echo "--version output: $RAW"
+          OUT="$(echo "$RAW" | tr -d '\r' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+[^ ]*' | head -n1 || true)"
+          VERSION="${OUT:-$STORE}"
+          echo "version: $VERSION"
+          case "$VERSION" in
+            7.0.*) echo "PASS" ;;
+            *) echo "FAIL: expected a 7.0.x version"; exit 1 ;;
+          esac

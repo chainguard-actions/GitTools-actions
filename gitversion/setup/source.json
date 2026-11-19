@@ -1,0 +1,17 @@
+{
+  "owner": "GitTools",
+  "repo": "actions",
+  "version": "v5.0.0",
+  "path": "gitversion/setup",
+  "commit_sha": "389fe43e6b0189b98c40c43553070ac029304635",
+  "url": "https://github.com/GitTools/actions",
+  "policy_sha": "d636be7e43ef829af6e853da6b3c7566db9f72fe",
+  "test_policy_sha": "843adf9e4b8f85d0c08b27b9d0b09dd094b54702",
+  "test_agent_version": "2",
+  "harden_agent_version": "2",
+  "node_artifact": {
+    "gcs_uri": "gs://prod-actions-node-artifacts/node-artifacts/GitTools/actions/v5.0.0/sha256-9addb4c7f3afa99b03f24f9e05cb87d274a63ae9ba30c94f02c75e85d133e9de.tar.gz",
+    "sha256": "9addb4c7f3afa99b03f24f9e05cb87d274a63ae9ba30c94f02c75e85d133e9de",
+    "size_bytes": 29
+  }
+}
