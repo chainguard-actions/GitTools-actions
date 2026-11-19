@@ -1,0 +1,89 @@
+name: Test overrideConfig next-version
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion binary and dotnet shim
+        run: |
+          set -e
+          GV="$RUNNER_TEMP/gitversion"
+          mkdir -p "$GV"
+          curl -sSfL -o "$RUNNER_TEMP/gitversion.tar.gz" \
+            https://github.com/GitTools/GitVersion/releases/download/6.3.0/gitversion-linux-x64-6.3.0.tar.gz
+          tar -xzf "$RUNNER_TEMP/gitversion.tar.gz" -C "$GV"
+          chmod +x "$GV/gitversion"
+          rm -f "$GV/dotnet-gitversion"
+          cat > "$GV/dotnet-gitversion" <<EOF
+          #!/bin/bash
+          args=(); skip=0
+          for a in "\$@"; do
+            if [ "\$skip" = 1 ]; then skip=0; continue; fi
+            case "\$a" in
+              --roll-forward) skip=1; continue ;;
+              --roll-forward\ *|--roll-forward=*) continue ;;
+            esac
+            args+=("\$a")
+          done
+          exec "$GV/gitversion" "\${args[@]}"
+          EOF
+          cat > "$GV/dotnet" <<EOF
+          #!/bin/bash
+          case "\$1" in
+            --version) echo "8.0.404"; exit 0 ;;
+            --info) echo ".NET SDK:"; echo " Version: 8.0.404"; exit 0 ;;
+            --list-sdks) echo "8.0.404 [/usr/share/dotnet/sdk]"; exit 0 ;;
+            --list-runtimes) echo "Microsoft.NETCore.App 8.0.11 [/usr/share/dotnet/shared/Microsoft.NETCore.App]"; exit 0 ;;
+          esac
+          args=(); skip=0; dropped=0
+          for a in "\$@"; do
+            if [ "\$skip" = 1 ]; then skip=0; continue; fi
+            case "\$a" in
+              --roll-forward) skip=1; continue ;;
+              --roll-forward\ *|--roll-forward=*) continue ;;
+            esac
+            if [ "\$dropped" = 0 ] && [[ "\$a" == *gitversion* ]]; then dropped=1; continue; fi
+            args+=("\$a")
+          done
+          exec "$GV/gitversion" "\${args[@]}"
+          EOF
+          chmod +x "$GV/dotnet-gitversion" "$GV/dotnet"
+          echo "$GV" >> "$GITHUB_PATH"
+          echo "GITVERSION_PATH=$GV" >> "$GITHUB_ENV"
+          "$GV/dotnet" --version
+      - name: Prepare repository
+        run: |
+          git config --global --add safe.directory '*'
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --unshallow || true
+          fi
+          git commit --allow-empty -m "test commit"
+      - id: action
+        uses: .
+        with:
+          disableNormalization: 'true'
+          disableShallowCloneCheck: 'true'
+          disableCache: 'true'
+          overrideConfig: |
+            next-version=99.0.0
+      - name: Assert major is 99
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+        run: |
+          echo "major=$MAJOR majorMinorPatch=$MMP"
+          if [ "$MAJOR" != "99" ]; then
+            echo "FAIL: expected major 99"; exit 1
+          fi
+          if [ "$MMP" != "99.0.0" ]; then
+            echo "FAIL: expected majorMinorPatch 99.0.0"; exit 1
+          fi
+          echo "PASS"

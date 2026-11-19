@@ -1,0 +1,39 @@
+name: Test exact version with preferLatestVersion
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure .NET SDK is available
+        run: |
+          if command -v dotnet >/dev/null 2>&1; then
+            exit 0
+          fi
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          versionSpec: '0.20.0'
+          includePrerelease: 'false'
+          ignoreFailedSources: 'true'
+          preferLatestVersion: 'true'
+      - name: Assert exact version installed
+        run: |
+          BIN="$(command -v dotnet-gitreleasemanager || true)"
+          echo "binary: $BIN"
+          if [ -z "$BIN" ]; then
+            echo "FAIL: dotnet-gitreleasemanager not found on PATH"
+            exit 1
+          fi
+          REAL="$(readlink -f "$BIN")"
+          echo "resolved: $REAL"
+          case "$REAL" in
+            *0.20.0*) echo "PASS: 0.20.0 installed" ;;
+            *) echo "FAIL: expected 0.20.0 in install path"; exit 1 ;;
+          esac

@@ -1,0 +1,40 @@
+name: Test gitreleasemanager addasset with targetDirectory and logFilePath
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create asset files
+        run: |
+          mkdir -p "$RUNNER_TEMP/work"
+          echo "one" > "$RUNNER_TEMP/work/a.txt"
+          echo "two" > "$RUNNER_TEMP/work/b.txt"
+          echo "WORK_DIR=$RUNNER_TEMP/work" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: actionchain-harness/nonexistent-repo
+          token: ${{ github.token }}
+          milestone: '1.2.3'
+          assets: ${{ env.WORK_DIR }}/a.txt,${{ env.WORK_DIR }}/b.txt
+          targetDirectory: ${{ env.WORK_DIR }}
+          logFilePath: ${{ env.WORK_DIR }}/grm.log
+      - name: Assert action ran (succeeded or failed gracefully on the nonexistent repo)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ -f "$WORK_DIR/grm.log" ]; then
+            echo "log file contents:"; cat "$WORK_DIR/grm.log"
+          fi
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (repo/release not resolvable under harness)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

@@ -1,0 +1,26 @@
+name: Test discard against a non-existent repository
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: actionchain-harness/this-repo-does-not-exist-12345
+          token: ${{ secrets.GITHUB_TOKEN || github.token }}
+          milestone: 0.0.0-nonexistent
+      - name: Assert action failed (repository/milestone cannot be resolved)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed as expected for a non-existent repository"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME' (discarding a release on a non-existent repo must not succeed)"
+            exit 1
+          fi

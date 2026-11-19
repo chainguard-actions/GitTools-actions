@@ -1,0 +1,45 @@
+name: Test preferLatestVersion
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure .NET 8 SDK is available
+        run: |
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          versionSpec: '6.x'
+          preferLatestVersion: 'true'
+          includePrerelease: 'false'
+      - name: Assert a stable 6.x GitVersion is installed
+        run: |
+          BIN="$(command -v dotnet-gitversion || true)"
+          if [ -z "$BIN" ] && [ -n "$GITVERSION_PATH" ] && [ -x "$GITVERSION_PATH/dotnet-gitversion" ]; then
+            BIN="$GITVERSION_PATH/dotnet-gitversion"
+          fi
+          echo "binary: $BIN"
+          if [ -z "$BIN" ]; then
+            echo "FAIL: dotnet-gitversion not found on PATH"
+            exit 1
+          fi
+          VERSION="$("$BIN" /version)"
+          echo "version: $VERSION"
+          if ! echo "$VERSION" | grep -qE '^6\.[0-9]+\.[0-9]+'; then
+            echo "FAIL: expected a 6.x version"
+            exit 1
+          fi
+          # Version core (before any '+' build metadata) must not be a prerelease
+          CORE="${VERSION%%+*}"
+          if echo "$CORE" | grep -q -- '-'; then
+            echo "FAIL: expected a stable version, got prerelease '$CORE'"
+            exit 1
+          fi
+          echo "PASS"

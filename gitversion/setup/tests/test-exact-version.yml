@@ -1,0 +1,37 @@
+name: Test exact versionSpec
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure .NET 8 SDK is available
+        run: |
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          versionSpec: '6.4.0'
+      - name: Assert exact GitVersion version installed
+        run: |
+          BIN="$(command -v dotnet-gitversion || true)"
+          if [ -z "$BIN" ] && [ -n "$GITVERSION_PATH" ] && [ -x "$GITVERSION_PATH/dotnet-gitversion" ]; then
+            BIN="$GITVERSION_PATH/dotnet-gitversion"
+          fi
+          echo "binary: $BIN"
+          if [ -z "$BIN" ]; then
+            echo "FAIL: dotnet-gitversion not found on PATH"
+            exit 1
+          fi
+          VERSION="$("$BIN" /version)"
+          echo "version: $VERSION"
+          if ! echo "$VERSION" | grep -qE '^6\.4\.0([+-]|$)'; then
+            echo "FAIL: expected version 6.4.0"
+            exit 1
+          fi
+          echo "PASS"

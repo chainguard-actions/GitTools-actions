@@ -1,0 +1,108 @@
+name: Test basic usage
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install GitVersion binary and dotnet shim
+        run: |
+          set -e
+          GV="$RUNNER_TEMP/gitversion"
+          mkdir -p "$GV"
+          curl -sSfL -o "$RUNNER_TEMP/gitversion.tar.gz" \
+            https://github.com/GitTools/GitVersion/releases/download/6.3.0/gitversion-linux-x64-6.3.0.tar.gz
+          tar -xzf "$RUNNER_TEMP/gitversion.tar.gz" -C "$GV"
+          chmod +x "$GV/gitversion"
+          # dotnet-gitversion wrapper: strips dotnet host options, runs native binary
+          rm -f "$GV/dotnet-gitversion"
+          cat > "$GV/dotnet-gitversion" <<EOF
+          #!/bin/bash
+          args=(); skip=0
+          for a in "\$@"; do
+            if [ "\$skip" = 1 ]; then skip=0; continue; fi
+            case "\$a" in
+              --roll-forward) skip=1; continue ;;
+              --roll-forward\ *|--roll-forward=*) continue ;;
+            esac
+            args+=("\$a")
+          done
+          exec "$GV/gitversion" "\${args[@]}"
+          EOF
+          # fake dotnet: answers version queries, forwards tool invocations
+          cat > "$GV/dotnet" <<EOF
+          #!/bin/bash
+          case "\$1" in
+            --version) echo "8.0.404"; exit 0 ;;
+            --info) echo ".NET SDK:"; echo " Version: 8.0.404"; exit 0 ;;
+            --list-sdks) echo "8.0.404 [/usr/share/dotnet/sdk]"; exit 0 ;;
+            --list-runtimes) echo "Microsoft.NETCore.App 8.0.11 [/usr/share/dotnet/shared/Microsoft.NETCore.App]"; exit 0 ;;
+          esac
+          args=(); skip=0; dropped=0
+          for a in "\$@"; do
+            if [ "\$skip" = 1 ]; then skip=0; continue; fi
+            case "\$a" in
+              --roll-forward) skip=1; continue ;;
+              --roll-forward\ *|--roll-forward=*) continue ;;
+            esac
+            if [ "\$dropped" = 0 ] && [[ "\$a" == *gitversion* ]]; then dropped=1; continue; fi
+            args+=("\$a")
+          done
+          exec "$GV/gitversion" "\${args[@]}"
+          EOF
+          sed -i 's/^          //' "$GV/dotnet-gitversion" "$GV/dotnet"
+          chmod +x "$GV/dotnet-gitversion" "$GV/dotnet"
+          echo "$GV" >> "$GITHUB_PATH"
+          # The action resolves the tool dir from GITVERSION_PATH (set by gitversion/setup);
+          # when unset it resolves to the cwd, so point it at our install dir.
+          echo "GITVERSION_PATH=$GV" >> "$GITHUB_ENV"
+          "$GV/dotnet" --version
+      - name: Prepare repository
+        run: |
+          git config --global --add safe.directory '*'
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --unshallow || true
+          fi
+          git commit --allow-empty -m "test commit"
+      - id: action
+        uses: .
+        with:
+          disableNormalization: 'true'
+          disableShallowCloneCheck: 'true'
+      - name: Assert outputs
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MINOR: ${{ steps.action.outputs.minor }}
+          PATCH: ${{ steps.action.outputs.patch }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+          SEMVER: ${{ steps.action.outputs.semVer }}
+          SHA: ${{ steps.action.outputs.sha }}
+          SHORTSHA: ${{ steps.action.outputs.shortSha }}
+          BRANCH: ${{ steps.action.outputs.branchName }}
+        run: |
+          echo "major=$MAJOR minor=$MINOR patch=$PATCH mmp=$MMP semver=$SEMVER"
+          echo "sha=$SHA shortSha=$SHORTSHA branch=$BRANCH"
+          if ! echo "$MMP" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "FAIL: majorMinorPatch is not a valid version"; exit 1
+          fi
+          if [ "$MMP" != "$MAJOR.$MINOR.$PATCH" ]; then
+            echo "FAIL: majorMinorPatch does not match major.minor.patch"; exit 1
+          fi
+          if [ -z "$SEMVER" ]; then echo "FAIL: semVer empty"; exit 1; fi
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$SHA" != "$HEAD_SHA" ]; then
+            echo "FAIL: sha '$SHA' != HEAD '$HEAD_SHA'"; exit 1
+          fi
+          case "$HEAD_SHA" in
+            "$SHORTSHA"*) ;;
+            *) echo "FAIL: shortSha is not a prefix of HEAD sha"; exit 1 ;;
+          esac
+          if [ -z "$BRANCH" ]; then echo "FAIL: branchName empty"; exit 1; fi
+          echo "PASS"

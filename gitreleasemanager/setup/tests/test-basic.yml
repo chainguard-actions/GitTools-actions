@@ -1,0 +1,38 @@
+name: Test basic usage (versionSpec 0.20.x)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Ensure .NET SDK is available
+        run: |
+          if command -v dotnet >/dev/null 2>&1; then
+            dotnet --info | head -n 20 || true
+            exit 0
+          fi
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+      - id: action
+        uses: .
+        with:
+          versionSpec: '0.20.x'
+      - name: Assert GitReleaseManager is on PATH
+        run: |
+          BIN="$(command -v dotnet-gitreleasemanager || true)"
+          echo "binary: $BIN"
+          if [ -z "$BIN" ]; then
+            echo "FAIL: dotnet-gitreleasemanager not found on PATH"
+            echo "PATH=$PATH"
+            exit 1
+          fi
+          REAL="$(readlink -f "$BIN")"
+          echo "resolved: $REAL"
+          case "$REAL" in
+            *0.20.*) echo "PASS: installed a 0.20.x version" ;;
+            *) echo "FAIL: expected a 0.20.x install path"; exit 1 ;;
+          esac
