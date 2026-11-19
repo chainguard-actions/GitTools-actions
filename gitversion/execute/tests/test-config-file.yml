@@ -1,0 +1,49 @@
+name: Test configFilePath
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install .NET SDK and GitVersion tool
+        run: |
+          set -e
+          TMPD="${RUNNER_TEMP:-/tmp}"
+          DOTNET_DIR="$HOME/.dotnet"
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$TMPD/dotnet-install.sh"
+          bash "$TMPD/dotnet-install.sh" --channel 8.0 --install-dir "$DOTNET_DIR"
+          export DOTNET_ROOT="$DOTNET_DIR"
+          export PATH="$DOTNET_DIR:$PATH"
+          DIR="$TMPD/gitversion-tool"
+          dotnet tool install GitVersion.Tool --version 6.3.0 --tool-path "$DIR"
+          "$DIR/dotnet-gitversion" /version
+          echo "DOTNET_ROOT=$DOTNET_DIR" >> "$GITHUB_ENV"
+          echo "GITVERSION_PATH=$DIR" >> "$GITHUB_ENV"
+          echo "$DOTNET_DIR" >> "$GITHUB_PATH"
+          echo "$DIR" >> "$GITHUB_PATH"
+      - id: action
+        uses: .
+        with:
+          configFilePath: tests/fixtures/GitVersion.yml
+      - name: Assert version comes from the config file
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+        run: |
+          echo "major=$MAJOR mmp=$MMP"
+          if [ "$MAJOR" != "77" ]; then
+            echo "FAIL: expected major 77 from tests/fixtures/GitVersion.yml"
+            exit 1
+          fi
+          if [ "$MMP" != "77.0.0" ]; then
+            echo "FAIL: expected majorMinorPatch 77.0.0"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,59 @@
+name: Test targetPath with cache/normalization disabled and verbose output
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install .NET SDK and GitVersion tool
+        run: |
+          set -e
+          TMPD="${RUNNER_TEMP:-/tmp}"
+          DOTNET_DIR="$HOME/.dotnet"
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$TMPD/dotnet-install.sh"
+          bash "$TMPD/dotnet-install.sh" --channel 8.0 --install-dir "$DOTNET_DIR"
+          export DOTNET_ROOT="$DOTNET_DIR"
+          export PATH="$DOTNET_DIR:$PATH"
+          DIR="$TMPD/gitversion-tool"
+          dotnet tool install GitVersion.Tool --version 6.3.0 --tool-path "$DIR"
+          "$DIR/dotnet-gitversion" /version
+          echo "DOTNET_ROOT=$DOTNET_DIR" >> "$GITHUB_ENV"
+          echo "GITVERSION_PATH=$DIR" >> "$GITHUB_ENV"
+          echo "$DOTNET_DIR" >> "$GITHUB_PATH"
+          echo "$DIR" >> "$GITHUB_PATH"
+      - id: action
+        uses: .
+        with:
+          targetPath: ${{ github.workspace }}
+          disableCache: "true"
+          disableNormalization: "true"
+          disableShallowCloneCheck: "true"
+          verbosity: verbose
+      - name: Assert outputs
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+          SHA: ${{ steps.action.outputs.sha }}
+          ASSEMBLY: ${{ steps.action.outputs.assemblySemVer }}
+        run: |
+          echo "major=$MAJOR mmp=$MMP sha=$SHA assemblySemVer=$ASSEMBLY"
+          if ! echo "$MMP" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "FAIL: majorMinorPatch is not X.Y.Z"
+            exit 1
+          fi
+          if [ "$SHA" != "$(git rev-parse HEAD)" ]; then
+            echo "FAIL: sha does not match HEAD"
+            exit 1
+          fi
+          if [ -z "$ASSEMBLY" ]; then
+            echo "FAIL: assemblySemVer empty"
+            exit 1
+          fi
+          echo "PASS"

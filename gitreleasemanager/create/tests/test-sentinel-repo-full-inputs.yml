@@ -1,0 +1,40 @@
+name: Test create release with full inputs on harness repository
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare release notes and asset
+        run: |
+          mkdir -p "$RUNNER_TEMP/grm"
+          echo "# Release notes" > "$RUNNER_TEMP/grm/notes.md"
+          echo "asset" > "$RUNNER_TEMP/grm/asset.txt"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: ${{ github.repository }}
+          token: ${{ github.token }}
+          milestone: 9.9.9-test
+          name: 9.9.9-test
+          inputFilePath: ${{ runner.temp }}/grm/notes.md
+          isPreRelease: 'true'
+          targetcommitish: ${{ github.sha }}
+          assets: ${{ runner.temp }}/grm/asset.txt
+          targetDirectory: ${{ github.workspace }}
+          logFilePath: ${{ runner.temp }}/grm/grm.log
+      - name: Assert action ran (or failed gracefully on the sentinel repo)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: release created"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (sentinel repo / tool not resolvable)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

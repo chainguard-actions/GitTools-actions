@@ -1,0 +1,80 @@
+name: Test basic usage
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install .NET SDK and GitVersion tool
+        run: |
+          set -e
+          TMPD="${RUNNER_TEMP:-/tmp}"
+          DOTNET_DIR="$HOME/.dotnet"
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$TMPD/dotnet-install.sh"
+          bash "$TMPD/dotnet-install.sh" --channel 8.0 --install-dir "$DOTNET_DIR"
+          export DOTNET_ROOT="$DOTNET_DIR"
+          export PATH="$DOTNET_DIR:$PATH"
+          dotnet --info | head -n 20
+          DIR="$TMPD/gitversion-tool"
+          dotnet tool install GitVersion.Tool --version 6.3.0 --tool-path "$DIR"
+          "$DIR/dotnet-gitversion" /version
+          echo "DOTNET_ROOT=$DOTNET_DIR" >> "$GITHUB_ENV"
+          echo "GITVERSION_PATH=$DIR" >> "$GITHUB_ENV"
+          echo "$DOTNET_DIR" >> "$GITHUB_PATH"
+          echo "$DIR" >> "$GITHUB_PATH"
+      - id: action
+        uses: .
+      - name: Assert outputs
+        env:
+          MAJOR: ${{ steps.action.outputs.major }}
+          MINOR: ${{ steps.action.outputs.minor }}
+          PATCH: ${{ steps.action.outputs.patch }}
+          MMP: ${{ steps.action.outputs.majorMinorPatch }}
+          SEMVER: ${{ steps.action.outputs.semVer }}
+          FULLSEMVER: ${{ steps.action.outputs.fullSemVer }}
+          SHA: ${{ steps.action.outputs.sha }}
+          SHORTSHA: ${{ steps.action.outputs.shortSha }}
+        run: |
+          echo "major=$MAJOR minor=$MINOR patch=$PATCH mmp=$MMP"
+          echo "semVer=$SEMVER fullSemVer=$FULLSEMVER"
+          echo "sha=$SHA shortSha=$SHORTSHA"
+          for v in "$MAJOR" "$MINOR" "$PATCH"; do
+            if ! echo "$v" | grep -qE '^[0-9]+$'; then
+              echo "FAIL: '$v' is not numeric"
+              exit 1
+            fi
+          done
+          if [ "$MMP" != "$MAJOR.$MINOR.$PATCH" ]; then
+            echo "FAIL: majorMinorPatch mismatch"
+            exit 1
+          fi
+          case "$SEMVER" in
+            "$MMP"*) ;;
+            *) echo "FAIL: semVer does not start with majorMinorPatch"; exit 1 ;;
+          esac
+          if [ -z "$FULLSEMVER" ]; then
+            echo "FAIL: fullSemVer empty"
+            exit 1
+          fi
+          HEAD_SHA="$(git rev-parse HEAD)"
+          echo "HEAD=$HEAD_SHA"
+          if [ "$SHA" != "$HEAD_SHA" ]; then
+            echo "FAIL: sha does not match HEAD"
+            exit 1
+          fi
+          if [ -z "$SHORTSHA" ]; then
+            echo "FAIL: shortSha empty"
+            exit 1
+          fi
+          case "$SHA" in
+            "$SHORTSHA"*) ;;
+            *) echo "FAIL: shortSha is not a prefix of sha"; exit 1 ;;
+          esac
+          echo "PASS"

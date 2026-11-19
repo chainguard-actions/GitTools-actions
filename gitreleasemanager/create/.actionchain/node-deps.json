@@ -1,0 +1,22 @@
+{
+  "status": "unbundlable",
+  "entries": [
+    {
+      "shared_files": [
+        "dist/tools/azure/agent.mjs",
+        "dist/tools/github/agent.mjs",
+        "dist/tools/lib.mjs",
+        "dist/tools/libs/agents.mjs",
+        "dist/tools/libs/gitreleasemanager.mjs",
+        "dist/tools/libs/gitversion.mjs",
+        "dist/tools/libs/semver.mjs",
+        "dist/tools/libs/tools.mjs",
+        "dist/tools/local/agent.mjs",
+        "dist/tools/rolldown-runtime.mjs"
+      ],
+      "path": "main.mjs",
+      "status": "unbundlable",
+      "reason": "entry imports shared code from outside the action root that needs no node_modules"
+    }
+  ]
+}

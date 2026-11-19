@@ -1,0 +1,73 @@
+name: Test quiet verbosity with JSON output and increment
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "1"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+      DOTNET_NOLOGO: "true"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install .NET SDK and GitVersion.Tool
+        run: |
+          set -e
+          droot="$RUNNER_TEMP/dotnet"
+          curl -sSfL -o "$RUNNER_TEMP/dotnet-install.sh" https://dot.net/v1/dotnet-install.sh
+          bash "$RUNNER_TEMP/dotnet-install.sh" --channel 8.0 --install-dir "$droot"
+          export DOTNET_ROOT="$droot"
+          export PATH="$droot:$PATH"
+          dotnet --version
+          tooldir="$RUNNER_TEMP/gitversion-tool"
+          dotnet tool install GitVersion.Tool --version 6.3.0 --tool-path "$tooldir"
+          echo "DOTNET_ROOT=$droot" >> "$GITHUB_ENV"
+          echo "GITVERSION_PATH=$tooldir" >> "$GITHUB_ENV"
+          echo "$droot" >> "$GITHUB_PATH"
+          echo "$tooldir" >> "$GITHUB_PATH"
+      - name: Create a fixture repository with one remote on the build branch
+        run: |
+          set -e
+          br="${GITHUB_REF#refs/heads/}"
+          if [ -z "$br" ] || [ "$br" = "$GITHUB_REF" ]; then br=act-harness; fi
+          echo "build branch: $br"
+          repo="$GITHUB_WORKSPACE/gv-repo2"
+          remote="$RUNNER_TEMP/gv-remote2.git"
+          rm -rf "$repo" "$remote"
+          git init -q --bare "$remote"
+          mkdir -p "$repo"
+          cd "$repo"
+          git init -q -b "$br"
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          printf 'workflow: GitHubFlow/v1\nbranches:\n  main:\n    regex: ^(main|master|act-harness|%s)$\n' "$br" > GitVersion.yml
+          echo one > a.txt && git add a.txt GitVersion.yml && git commit -q -m "first"
+          git tag v2.0.0
+          echo two > b.txt && git add b.txt && git commit -q -m "second"
+          git remote add origin "$remote"
+          git push -q origin "$br" --tags
+          git fetch -q origin
+          git branch -u "origin/$br"
+          git log --oneline --decorate
+      - id: action
+        uses: .
+        with:
+          targetPath: gv-repo2
+          verbosity: quiet
+          arguments: /nofetch /output file /outputfile ${{ github.workspace }}/gv-out2.json
+      - name: Assert version incremented past tag
+        run: |
+          f="$GITHUB_WORKSPACE/gv-out2.json"
+          if [ ! -f "$f" ]; then
+            echo "FAIL: output file not created"
+            exit 1
+          fi
+          cat "$f"
+          major=$(python3 -c "import json;print(json.load(open('$f'))['Major'])")
+          mmp=$(python3 -c "import json;print(json.load(open('$f'))['MajorMinorPatch'])")
+          echo "Major: $major MajorMinorPatch: $mmp"
+          if [ "$major" != "2" ] || [ "$mmp" = "2.0.0" ]; then
+            echo "FAIL: expected a 2.x version greater than 2.0.0"
+            exit 1
+          fi
+          echo "PASS"

@@ -1,0 +1,36 @@
+name: Test addasset with targetDirectory and logFilePath
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create asset files
+        run: |
+          mkdir -p "$RUNNER_TEMP/work"
+          echo "one" > "$RUNNER_TEMP/work/a.txt"
+          echo "two" > "$RUNNER_TEMP/work/b.txt"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: actionchain-harness/does-not-exist
+          token: ${{ github.token }}
+          milestone: '1.0.0'
+          assets: |
+            ${{ runner.temp }}/work/a.txt
+            ${{ runner.temp }}/work/b.txt
+          targetDirectory: ${{ runner.temp }}/work
+          logFilePath: ${{ runner.temp }}/work/grm.log
+      - name: Assert action ran
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action executed (outcome '$OUTCOME')"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

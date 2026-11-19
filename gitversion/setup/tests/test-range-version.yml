@@ -1,0 +1,38 @@
+name: Test range versionSpec with preferLatestVersion
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Install .NET SDK (if missing)
+        run: |
+          if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks | grep -q '^8\.'; then
+            echo ".NET 8 already present"; exit 0
+          fi
+          curl -sSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+      - id: action
+        uses: .
+        with:
+          versionSpec: '6.x'
+          preferLatestVersion: 'true'
+      - name: Assert GitVersion 6.x (>=6.2) installed
+        run: |
+          BIN="$(command -v dotnet-gitversion || command -v gitversion || true)"
+          echo "binary: $BIN"
+          if [ -z "$BIN" ]; then
+            echo "FAIL: gitversion binary not on PATH"
+            exit 1
+          fi
+          VER="$("$BIN" /version | tr -d '\r' | head -n1)"
+          echo "version: $VER"
+          case "$VER" in
+            6.0.*|6.1.*) echo "FAIL: version below supported 6.2.0"; exit 1 ;;
+            6.*) echo "PASS" ;;
+            *) echo "FAIL: expected a 6.x version"; exit 1 ;;
+          esac

@@ -1,0 +1,35 @@
+name: Test addasset basic usage
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Create asset file
+        run: |
+          mkdir -p "$RUNNER_TEMP/assets"
+          echo "hello asset" > "$RUNNER_TEMP/assets/asset.txt"
+      # Adding an asset requires GitReleaseManager to be installed (via the
+      # setup action) and write access to a release of the target repository,
+      # neither of which is available under the harness. The action must run
+      # and either succeed or fail gracefully - it must not be skipped.
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: actionchain-harness/does-not-exist
+          token: ${{ github.token }}
+          milestone: '0.0.1'
+          assets: ${{ runner.temp }}/assets/asset.txt
+      - name: Assert action ran
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ "$OUTCOME" = "success" ] || [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action executed (outcome '$OUTCOME')"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi

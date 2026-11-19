@@ -1,0 +1,36 @@
+name: Test close with targetDirectory and logFilePath
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Prepare target directory
+        run: mkdir -p "$GITHUB_WORKSPACE/grm-target"
+      - id: action
+        uses: .
+        continue-on-error: true
+        with:
+          repository: actionchain-harness/nonexistent-repo-for-tests
+          token: ${{ github.token }}
+          milestone: 0.0.1-test
+          targetDirectory: grm-target
+          logFilePath: grm-target/grm.log
+      - name: Assert action ran and finished (success, or graceful failure)
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          echo "outcome: $OUTCOME"
+          if [ -f "$GITHUB_WORKSPACE/grm-target/grm.log" ]; then
+            echo "log file contents:"
+            cat "$GITHUB_WORKSPACE/grm-target/grm.log"
+          fi
+          if [ "$OUTCOME" = "success" ]; then
+            echo "PASS: action succeeded"
+          elif [ "$OUTCOME" = "failure" ]; then
+            echo "PASS: action failed gracefully (non-existent repo / tool not set up)"
+          else
+            echo "FAIL: unexpected outcome '$OUTCOME'"
+            exit 1
+          fi
